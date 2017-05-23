@@ -308,6 +308,7 @@ vhost_scsi="no"
 vhost_vsock="no"
 kvm="no"
 hax="no"
+hvf="no"
 rdma=""
 gprof="no"
 debug_tcg="no"
@@ -725,6 +726,7 @@ Darwin)
   bsd="yes"
   darwin="yes"
   hax="yes"
+  hvf="yes" # XXX available on >= 10.10 (Yosemite)
   LDFLAGS_SHARED="-bundle -undefined dynamic_lookup"
   if [ "$cpu" = "x86_64" ] ; then
     QEMU_CFLAGS="-arch x86_64 $QEMU_CFLAGS"
@@ -1024,6 +1026,10 @@ for opt do
   --disable-hax) hax="no"
   ;;
   --enable-hax) hax="yes"
+  ;;
+  --disable-hvf) hvf="no"
+  ;;
+  --enable-hvf) hvf="yes"
   ;;
   --disable-tcg-interpreter) tcg_interpreter="no"
   ;;
@@ -1481,6 +1487,7 @@ disabled with --disable-FEATURE, default is enabled if available:
   bluez           bluez stack connectivity
   kvm             KVM acceleration support
   hax             HAX acceleration support
+  hvf             Hypervisor.framework acceleration support
   rdma            RDMA-based migration support
   vde             support for vde network
   netmap          support for netmap network
@@ -5333,6 +5340,7 @@ if test "$tcg" = "yes" ; then
     echo "TCG debug enabled $debug_tcg"
     echo "TCG interpreter   $tcg_interpreter"
 fi
+echo "HVF support       $hvf"
 echo "RDMA support      $rdma"
 echo "fdt support       $fdt"
 echo "preadv support    $preadv"
@@ -6358,6 +6366,15 @@ if supported_kvm_target $target; then
 fi
 if supported_hax_target $target; then
     echo "CONFIG_HAX=y" >> $config_target_mak
+fi
+if test "$hvf" = "yes" ; then
+  if test "$target_softmmu" = "yes" ; then
+    case "$target_name" in
+    i386|x86_64)
+      echo "CONFIG_HVF=y" >> $config_target_mak
+    ;;
+    esac
+  fi
 fi
 if test "$target_bigendian" = "yes" ; then
   echo "TARGET_WORDS_BIGENDIAN=y" >> $config_target_mak
