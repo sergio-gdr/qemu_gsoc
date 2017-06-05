@@ -965,7 +965,7 @@ static int hvf_accel_init(MachineState *ms)
         return err;
     }
 
-    s = HVF_STATE(ms->accelerator);
+    s = (HVFState *)g_malloc0(sizeof(HVFState));//HVF_STATE(ms->accelerator);
 
     s->num_slots = 32;
     for (x = 0; x < s->num_slots; ++x) {
