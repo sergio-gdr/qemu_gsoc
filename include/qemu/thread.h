@@ -32,6 +32,8 @@ void qemu_rec_mutex_init(QemuRecMutex *mutex);
 void qemu_cond_init(QemuCond *cond);
 void qemu_cond_destroy(QemuCond *cond);
 
+uint64_t qemu_pthread_threadid_np(pthread_t thread);
+
 /*
  * IMPORTANT: The implementation does not guarantee that pthread_cond_signal
  * and pthread_cond_broadcast can be called except while the same mutex is
