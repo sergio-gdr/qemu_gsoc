@@ -901,6 +901,9 @@ void cpu_synchronize_all_states(void)
 
     CPU_FOREACH(cpu) {
         cpu_synchronize_state(cpu);
+        if (hvf_enabled()) {
+            hvf_cpu_synchronize_state(cpu);
+        }
     }
 }
 
@@ -910,6 +913,9 @@ void cpu_synchronize_all_post_reset(void)
 
     CPU_FOREACH(cpu) {
         cpu_synchronize_post_reset(cpu);
+        if (hvf_enabled()) {
+            hvf_cpu_synchronize_post_reset(cpu);
+        }
     }
 }
 
@@ -919,6 +925,9 @@ void cpu_synchronize_all_post_init(void)
 
     CPU_FOREACH(cpu) {
         cpu_synchronize_post_init(cpu);
+        if (hvf_enabled()) {
+            hvf_cpu_synchronize_post_init(cpu);
+        }
     }
 }
 
@@ -1587,6 +1596,16 @@ static void qemu_cpu_kick_thread(CPUState *cpu)
     if (err) {
         fprintf(stderr, "qemu:%s: %s", __func__, strerror(err));
         exit(1);
+    }
+//#ifdef __APPLE__
+    // On OS X, the signal isn't caught reliably during shutdown.
+//    if (!atomic_mb_read(&exit_request)) {
+//        cpu_exit(cpu);
+//        atomic_mb_set(&exit_request, 1);
+//    }
+//#endif /* __APPLE__ */
+    if (hvf_enabled()) {
+        cpu_exit(cpu);
     }
 #else /* _WIN32 */
     if (!qemu_cpu_is_self(cpu)) {

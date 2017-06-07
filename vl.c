@@ -3750,6 +3750,7 @@ int main(int argc, char **argv, char **envp)
             case QEMU_OPTION_enable_hvf:
                 olist = qemu_find_opts("machine");
                 qemu_opts_parse_noisily(olist, "accel=hvf", false);
+                hvf_disable(0);
                 break;
             case QEMU_OPTION_M:
             case QEMU_OPTION_machine:

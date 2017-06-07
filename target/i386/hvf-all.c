@@ -435,6 +435,30 @@ void hvf_cpu_synchronize_state(CPUState *cpu_state)
     if (cpu_state->hvf_vcpu_dirty == 0)
         run_on_cpu(cpu_state, __hvf_cpu_synchronize_state, RUN_ON_CPU_NULL);
 }
+
+void __hvf_cpu_synchronize_post_reset(void *data)
+{
+    CPUState *cpu_state = (CPUState *)data;
+    hvf_put_registers(cpu_state);
+    cpu_state->hvf_vcpu_dirty = false;
+}
+
+void hvf_cpu_synchronize_post_reset(CPUState *cpu_state)
+{
+    run_on_cpu(cpu_state, __hvf_cpu_synchronize_post_reset, RUN_ON_CPU_NULL);
+}
+
+void _hvf_cpu_synchronize_post_init(void *data)
+{
+    CPUState *cpu_state = (CPUState *)data;
+    hvf_put_registers(cpu_state);
+    cpu_state->hvf_vcpu_dirty = false;
+}
+
+void hvf_cpu_synchronize_post_init(CPUState *cpu_state)
+{
+    run_on_cpu(cpu_state, _hvf_cpu_synchronize_post_init, RUN_ON_CPU_NULL);
+}
  
 // TODO: ept fault handlig
 void vmx_clear_int_window_exiting(CPUState *cpu);
@@ -583,9 +607,9 @@ int hvf_init_vcpu(CPUState * cpu) {
     X86CPU *x86cpu;
 
     int r;
-//   init_emu(cpu);
-//   init_decoder(cpu);
-//   init_cpuid(cpu);
+    init_emu(cpu);
+    init_decoder(cpu);
+    init_cpuid(cpu);
 
     cpu->hvf_caps = (struct hvf_vcpu_caps*)g_malloc0(sizeof(struct hvf_vcpu_caps));
     cpu->hvf_x86 = (struct hvf_x86_state*)g_malloc0(sizeof(struct hvf_x86_state));
@@ -925,7 +949,7 @@ again:
                 //DPRINTF("triple fault at %llx (%llx, %llx), cr0 %llx, qual %llx, gpa %llx, ins len %d, cpu %p\n",
                         //linear_rip(cpu, rip), RIP(cpu), linear_addr(cpu, rip, REG_SEG_CS),
                         //rvmcs(cpu->hvf_fd, VMCS_GUEST_CR0), exit_qual, gpa, ins_len, cpu);
-                qemu_system_reset_request();
+                //qemu_system_reset_request(); XXX
                 usleep(1000 * 100);
                 ret = EXCP_INTERRUPT;
                 break;
@@ -966,13 +990,13 @@ static int hvf_accel_init(MachineState *ms)
     }
 
     s = (HVFState *)g_malloc0(sizeof(HVFState));//HVF_STATE(ms->accelerator);
-
+ 
     s->num_slots = 32;
     for (x = 0; x < s->num_slots; ++x) {
         s->slots[x].size = 0;
         s->slots[x].slot_id = x;
     }
-
+  
     hvf_state = s;
     cpu_interrupt_handler = hvf_handle_interrupt;
     memory_listener_register(&hvf_memory_listener, &address_space_memory);
@@ -989,7 +1013,7 @@ static void hvf_accel_class_init(ObjectClass *oc, void *data)
 }
 
 static const TypeInfo hvf_accel_type = {
-    .name = ACCEL_CLASS_NAME("hvf"),
+    .name = TYPE_HVF_ACCEL,//ACCEL_CLASS_NAME("hvf"),
     .parent = TYPE_ACCEL,
     .class_init = hvf_accel_class_init,
 };
