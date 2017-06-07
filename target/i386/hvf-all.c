@@ -679,9 +679,9 @@ int hvf_vcpu_exec(CPUState* cpu) {
     cpu->halted = 0;
 
     if (hvf_process_events(cpu)) {
-        qemu_mutex_unlock_iothread();
-        pthread_yield_np();
-        qemu_mutex_lock_iothread();
+       //qemu_mutex_unlock_iothread();
+       //pthread_yield_np();
+       //qemu_mutex_lock_iothread();
         return EXCP_HLT;
     }
 
@@ -703,7 +703,8 @@ again:
 
 
         qemu_mutex_unlock_iothread();
-        while (!cpu_is_bsp(X86_CPU(cpu)) && cpu->halted) {
+        //while (!cpu_is_bsp(X86_CPU(cpu)) && cpu->halted) {
+        if (!cpu_is_bsp(X86_CPU(cpu)) && cpu->halted) {
             qemu_mutex_lock_iothread();
             return EXCP_HLT;
         }

@@ -1467,7 +1467,7 @@ static void *qemu_hvf_cpu_thread_fn(void *arg)
 
     rcu_register_thread();
 
-    qemu_mutex_lock(&qemu_global_mutex);
+    qemu_mutex_lock_iothread();
     qemu_thread_get_self(cpu->thread);
 
     cpu->thread_id = qemu_get_thread_id();
