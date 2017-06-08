@@ -22,8 +22,8 @@
 #include "hw/i386/apic_internal.h"
 #include "hw/boards.h"
 #include "qemu/main-loop.h"
-//#include "qemu/abort.h"
 #include "strings.h"
+#include "trace.h"
 #include "sysemu/accel.h"
 #include "sysemu/sysemu.h"
 #include "target/i386/cpu.h"
@@ -32,31 +32,35 @@ pthread_rwlock_t mem_lock = PTHREAD_RWLOCK_INITIALIZER;
 HVFState *hvf_state;
 static int hvf_disabled = 1;
 
-static int print_err(hv_return_t err)
+static void assert_hvf_ok(hv_return_t ret)
 {
- switch (err) {
-  case HV_ERROR:
-   printf("Error: HV_ERROR\n");
-   break;
-  case HV_BUSY:
-   printf("Error: HV_BUSY\n");
-   break;
-  case HV_BAD_ARGUMENT:
-   printf("Error: HV_BAD_ARGUMENT\n");
-   break;
-  case HV_NO_RESOURCES:
-   printf("Error: HV_NO_RESOURCES\n");
-   break;
-  case HV_NO_DEVICE:
-   printf("Error: HV_NO_DEVICE\n");
-   break;
-  case HV_UNSUPPORTED:
-   printf("Error: HV_UNSUPPORTED\n");
-   break;
-  default:
-   printf("Unknown Error\n");
- }
- return -1; // XXX
+    if (ret == HV_SUCCESS)
+        return;
+
+    switch (ret) {
+        case HV_ERROR:
+            fprintf(stderr, "Error: HV_ERROR\n");
+            break;
+        case HV_BUSY:
+            fprintf(stderr, "Error: HV_BUSY\n");
+            break;
+        case HV_BAD_ARGUMENT:
+            fprintf(stderr, "Error: HV_BAD_ARGUMENT\n");
+            break;
+        case HV_NO_RESOURCES:
+            fprintf(stderr, "Error: HV_NO_RESOURCES\n");
+            break;
+        case HV_NO_DEVICE:
+            fprintf(stderr, "Error: HV_NO_DEVICE\n");
+            break;
+        case HV_UNSUPPORTED:
+            fprintf(stderr, "Error: HV_UNSUPPORTED\n");
+            break;
+        default:
+            fprintf(stderr, "Unknown Error\n");
+    }
+
+    abort();
 }
 
 // Memory slots/////////////////////////////////////////////////////////////////
@@ -94,14 +98,8 @@ int __hvf_set_memory(hvf_slot *slot)
     if (macslot->present) {
         if (macslot->size != slot->size) {
             macslot->present = 0;
-        //   DPRINTF("%s: hv_vm_unmap for gpa [0x%llx 0x%llx]\n", __func__,
-        //           (unsigned long long)macslot->gpa_start,
-        //           (unsigned long long)(macslot->gpa_start + macslot->size));
-            int unmapres = hv_vm_unmap(macslot->gpa_start, macslot->size);
-            if ( (ret = hv_vm_unmap(macslot->gpa_start, macslot->size)) != HV_SUCCESS) {
-                unmapres = print_err(ret);
-                //return unmapres; // XXX should abort
-            }
+            ret = hv_vm_unmap(macslot->gpa_start, macslot->size);
+            assert_hvf_ok(ret);
         }
     }
 
@@ -115,12 +113,8 @@ int __hvf_set_memory(hvf_slot *slot)
     macslot->present = 1;
     macslot->gpa_start = slot->start;
     macslot->size = slot->size;
-  // DPRINTF("%s: hv_vm_map for hva 0x%llx gpa [0x%llx 0x%llx]\n", __func__,
-  //         (unsigned long long)(slot->mem),
-  //         (unsigned long long)macslot->gpa_start,
-  //         (unsigned long long)(macslot->gpa_start + macslot->size));
-    int mapres = (hv_vm_map((hv_uvaddr_t)slot->mem, slot->start, slot->size, flags));
-    //assert_hvf_ok(mapres); XXX
+    ret = hv_vm_map((hv_uvaddr_t)slot->mem, slot->start, slot->size, flags);
+    assert_hvf_ok(ret);
     pthread_rwlock_unlock(&mem_lock);
     return 0;
 }
@@ -147,7 +141,8 @@ void hvf_set_phys_mem(MemoryRegionSection* section, bool add)
     if (mem) {
         mem->size = 0;
         if (__hvf_set_memory(mem)) {
-            ;//qemu_abort("%s: Failed to reset overlapping slot\n", __func__);
+            fprintf(stderr, "Failed to reset overlapping slot\n");
+            abort();
         }
     }
 
@@ -163,7 +158,8 @@ void hvf_set_phys_mem(MemoryRegionSection* section, bool add)
     }
 
     if (x == hvf_state->num_slots) {
-        ;//qemu_abort("%s: no free slots\n", __func__);
+        fprintf(stderr, "No free slots\n");
+        abort();
     }
 
     mem->size = int128_get64(section->size);
@@ -171,7 +167,8 @@ void hvf_set_phys_mem(MemoryRegionSection* section, bool add)
     mem->start = section->offset_within_address_space;
 
     if (__hvf_set_memory(mem)) {
-        ;//qemu_abort("%s: error regsitering new memory slot\n", __func__);
+        fprintf(stderr, "Error registering new memory slot\n");
+        abort();
     }
 }
 
@@ -182,18 +179,18 @@ static int apic_fls_bit(uint32_t value)
 }
 
 /* Find first bit starting from lsb */
-static int apic_ffs_bit(uint32_t value)
-{
-    return ctz32(value);
-}
+//static int apic_ffs_bit(uint32_t value)
+//{
+//    return ctz32(value);
+//}
 
-static inline void apic_reset_bit(uint32_t *tab, int index)
-{
-    int i, mask;
-    i = index >> 5;
-    mask = 1 << (index & 0x1f);
-    tab[i] &= ~mask;
-}
+//static inline void apic_reset_bit(uint32_t *tab, int index)
+//{
+//    int i, mask;
+//    i = index >> 5;
+//    mask = 1 << (index & 0x1f);
+//    tab[i] &= ~mask;
+//}
 
 /* return -1 if no bit is set */
 static int get_highest_priority_int(uint32_t *tab)
@@ -283,13 +280,13 @@ static void load_state_from_tss32(CPUState *cpu, struct x86_tss_segment32 *tss)
     RSI(cpu) = tss->esi;
     RDI(cpu) = tss->edi;
 
-    vmx_write_segment_selector(cpu, (x68_segment_selector){tss->ldt}, REG_SEG_LDTR);
-    vmx_write_segment_selector(cpu, (x68_segment_selector){tss->es}, REG_SEG_ES);
-    vmx_write_segment_selector(cpu, (x68_segment_selector){tss->cs}, REG_SEG_CS);
-    vmx_write_segment_selector(cpu, (x68_segment_selector){tss->ss}, REG_SEG_SS);
-    vmx_write_segment_selector(cpu, (x68_segment_selector){tss->ds}, REG_SEG_DS);
-    vmx_write_segment_selector(cpu, (x68_segment_selector){tss->fs}, REG_SEG_FS);
-    vmx_write_segment_selector(cpu, (x68_segment_selector){tss->gs}, REG_SEG_GS);
+    vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->ldt}}, REG_SEG_LDTR);
+    vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->es}}, REG_SEG_ES);
+    vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->cs}}, REG_SEG_CS);
+    vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->ss}}, REG_SEG_SS);
+    vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->ds}}, REG_SEG_DS);
+    vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->fs}}, REG_SEG_FS);
+    vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->gs}}, REG_SEG_GS);
 
 #if 0
     load_segment(cpu, REG_SEG_LDTR, tss->ldt);
@@ -405,8 +402,7 @@ static void hvf_handle_interrupt(CPUState * cpu, int mask)
     }
 }
 
-// XXX what returns?
-int hvf_handle_io(CPUArchState * env, uint16_t port, void* buffer,
+void hvf_handle_io(CPUArchState * env, uint16_t port, void* buffer,
                   int direction, int size, int count)
 {
     int i;
@@ -421,9 +417,9 @@ int hvf_handle_io(CPUArchState * env, uint16_t port, void* buffer,
 }
 //
 // TODO: synchronize vcpu state
-void __hvf_cpu_synchronize_state(void *data)
+void __hvf_cpu_synchronize_state(CPUState *cpu, run_on_cpu_data arg)
 {
-    CPUState *cpu_state = (CPUState *)data;
+    CPUState *cpu_state = cpu;//(CPUState *)data;
     if (cpu_state->hvf_vcpu_dirty == 0)
         hvf_get_registers(cpu_state);
 
@@ -436,9 +432,9 @@ void hvf_cpu_synchronize_state(CPUState *cpu_state)
         run_on_cpu(cpu_state, __hvf_cpu_synchronize_state, RUN_ON_CPU_NULL);
 }
 
-void __hvf_cpu_synchronize_post_reset(void *data)
+void __hvf_cpu_synchronize_post_reset(CPUState *cpu, run_on_cpu_data arg)
 {
-    CPUState *cpu_state = (CPUState *)data;
+    CPUState *cpu_state = cpu;
     hvf_put_registers(cpu_state);
     cpu_state->hvf_vcpu_dirty = false;
 }
@@ -448,9 +444,9 @@ void hvf_cpu_synchronize_post_reset(CPUState *cpu_state)
     run_on_cpu(cpu_state, __hvf_cpu_synchronize_post_reset, RUN_ON_CPU_NULL);
 }
 
-void _hvf_cpu_synchronize_post_init(void *data)
+void _hvf_cpu_synchronize_post_init(CPUState *cpu, run_on_cpu_data arg)
 {
-    CPUState *cpu_state = (CPUState *)data;
+    CPUState *cpu_state = cpu;
     hvf_put_registers(cpu_state);
     cpu_state->hvf_vcpu_dirty = false;
 }
@@ -492,18 +488,12 @@ static bool ept_emulation_fault(uint64_t ept_qual)
 static void hvf_region_add(MemoryListener * listener,
                            MemoryRegionSection * section)
 {
-//    DPRINTF("%s: call. for [0x%llx 0x%llx]\n", __func__,
-//             (unsigned long long)section->offset_within_address_space,
- //            (unsigned long long)(section->offset_within_address_space + int128_get64(section->size)));
     hvf_set_phys_mem(section, true);
 }
 
 static void hvf_region_del(MemoryListener * listener,
                            MemoryRegionSection * section)
 {
-  //  DPRINTF("%s: call. for [0x%llx 0x%llx]\n", __func__,
-   //          (unsigned long long)section->offset_within_address_space,
-    //         (unsigned long long)(section->offset_within_address_space + int128_get64(section->size)));
     hvf_set_phys_mem(section, false);
 }
 
@@ -597,14 +587,30 @@ void vmx_reset_vcpu(CPUState *cpu) {
     hv_vcpu_flush(cpu->hvf_fd);
 }
 
-int hvf_vcpu_destroy(CPUState* cpu) {
-    // TODO
+void hvf_vcpu_destroy(CPUState* cpu) 
+{
+    hv_return_t ret = hv_vcpu_destroy((hv_vcpuid_t)cpu->hvf_fd);
+    assert_hvf_ok(ret);
+}
+
+static void dummy_signal(int sig)
+{
 }
 
 int hvf_init_vcpu(CPUState * cpu) {
-    //DPRINTF("%s: entry. cpu: %p\n", __func__, cpu);
 
     X86CPU *x86cpu;
+    
+    // init cpu signals
+    sigset_t set;
+    struct sigaction sigact;
+
+    memset(&sigact, 0, sizeof(sigact));
+    sigact.sa_handler = dummy_signal;
+    sigaction(SIG_IPI, &sigact, NULL);
+
+    pthread_sigmask(SIG_BLOCK, NULL, &set);
+    sigdelset(&set, SIG_IPI);
 
     int r;
     init_emu(cpu);
@@ -614,19 +620,18 @@ int hvf_init_vcpu(CPUState * cpu) {
     cpu->hvf_caps = (struct hvf_vcpu_caps*)g_malloc0(sizeof(struct hvf_vcpu_caps));
     cpu->hvf_x86 = (struct hvf_x86_state*)g_malloc0(sizeof(struct hvf_x86_state));
 
-    //DPRINTF("%s: attempt hv_vcpu_create\n", __func__);
-    r = hv_vcpu_create(&cpu->hvf_fd, HV_VCPU_DEFAULT);
+    r = hv_vcpu_create((hv_vcpuid_t *)&cpu->hvf_fd, HV_VCPU_DEFAULT);
     cpu->hvf_vcpu_dirty = 1;
-    //assert_hvf_ok(r);
+    assert_hvf_ok(r);
 
 	if (hv_vmx_read_capability(HV_VMX_CAP_PINBASED, &cpu->hvf_caps->vmx_cap_pinbased))
-		;//qemu_abort("%s: error getting vmx capability HV_VMX_CAP_PINBASED\n", __func__);
+		abort();
 	if (hv_vmx_read_capability(HV_VMX_CAP_PROCBASED, &cpu->hvf_caps->vmx_cap_procbased))
-		;//qemu_abort("%s: error getting vmx capability HV_VMX_CAP_PROCBASED\n", __func__);
+		abort();
 	if (hv_vmx_read_capability(HV_VMX_CAP_PROCBASED2, &cpu->hvf_caps->vmx_cap_procbased2))
-		;//qemu_abort("%s: error getting vmx capability HV_VMX_CAP_PROCBASED2\n", __func__);
+		abort();
 	if (hv_vmx_read_capability(HV_VMX_CAP_ENTRY, &cpu->hvf_caps->vmx_cap_entry))
-		;//qemu_abort("%s: error getting vmx capability HV_VMX_CAP_ENTRY\n", __func__);
+		abort();
 
 	/* set VMCS control fields */
     wvmcs(cpu->hvf_fd, VMCS_PIN_BASED_CTLS, cap2ctrl(cpu->hvf_caps->vmx_cap_pinbased, 0));
@@ -685,9 +690,6 @@ int hvf_vcpu_exec(CPUState* cpu) {
         return EXCP_HLT;
     }
 
-again:
-
-
     do {
         if (cpu->hvf_vcpu_dirty) {
             hvf_put_registers(cpu);
@@ -703,17 +705,14 @@ again:
 
 
         qemu_mutex_unlock_iothread();
-        //while (!cpu_is_bsp(X86_CPU(cpu)) && cpu->halted) {
+
         if (!cpu_is_bsp(X86_CPU(cpu)) && cpu->halted) {
             qemu_mutex_lock_iothread();
             return EXCP_HLT;
         }
 
-        int r  = hv_vcpu_run(cpu->hvf_fd);
-
-        if (r) {
-            ;//qemu_abort("%s: %ld: run failed with %x\n", rip, r);
-        }
+        hv_return_t r  = hv_vcpu_run(cpu->hvf_fd);
+        assert_hvf_ok(r);
 
         /* handle VMEXIT */
         uint64_t exit_reason = rvmcs(cpu->hvf_fd, VMCS_EXIT_REASON);
@@ -724,6 +723,8 @@ again:
         RFLAGS(cpu) = rreg(cpu->hvf_fd, HV_X86_RFLAGS);
         env->eflags = RFLAGS(cpu);
 
+        trace_hvf_vm_exit(exit_reason, exit_qual);
+
         qemu_mutex_lock_iothread();
 
         update_apic_tpr(cpu);
@@ -733,7 +734,9 @@ again:
         switch (exit_reason) {
             case EXIT_REASON_HLT: {
                 macvm_set_rip(cpu, rip + ins_len);
-                if (!((cpu->interrupt_request & CPU_INTERRUPT_HARD) && (EFLAGS(cpu) & IF_MASK)) && !(cpu->interrupt_request & CPU_INTERRUPT_NMI) && !(idtvec_info & VMCS_IDT_VEC_VALID)) {
+                if (!((cpu->interrupt_request & CPU_INTERRUPT_HARD) && (EFLAGS(cpu) & IF_MASK))
+                    && !(cpu->interrupt_request & CPU_INTERRUPT_NMI) &&
+                    !(idtvec_info & VMCS_IDT_VEC_VALID)) {
                     cpu->halted = 1;
                     ret = EXCP_HLT;
                 }
@@ -749,6 +752,7 @@ again:
             {
                 hvf_slot *slot;
                 addr_t gpa = rvmcs(cpu->hvf_fd, VMCS_GUEST_PHYSICAL_ADDRESS);
+                trace_hvf_vm_exit_gpa(gpa);
 
                 if ((idtvec_info & VMCS_IDT_VEC_VALID) == 0 && (exit_qual & EXIT_QUAL_NMIUDTI) != 0)
                     vmx_set_nmi_blocking(cpu);
@@ -762,10 +766,6 @@ again:
                     cpu->hvf_x86->fetch_rip = rip;
 
                     decode_instruction(cpu, &decode);
-#if 0
-                    DPRINTF("%llx: fetched %s, %x %x modrm %x len %d, gpa %lx\n", rip, decode_cmd_to_string(decode.cmd),
-                           decode.opcode[0], decode.opcode[1], decode.modrm.byte, decode.len, gpa);
-#endif
                     exec_instruction(cpu, &decode);
                     store_regs(cpu);
                     break;
@@ -794,13 +794,13 @@ again:
                 uint32_t size =  (exit_qual & 7) + 1;
                 uint32_t string =  (exit_qual & 16) != 0;
                 uint32_t port =  exit_qual >> 16;
-                uint32_t rep = (exit_qual & 0x20) != 0;
+                //uint32_t rep = (exit_qual & 0x20) != 0;
 
 #if 1
                 if (!string && in) {
                     uint64_t val = 0;
                     load_regs(cpu);
-                    hvf_handle_io(cpu, port, &val, 0, size, 1);
+                    hvf_handle_io(env, port, &val, 0, size, 1);
                     if (size == 1) AL(cpu) = val;
                     else if (size == 2) AX(cpu) = val;
                     else if (size == 4) RAX(cpu) = (uint32_t)val;
@@ -810,7 +810,7 @@ again:
                     break;
                 } else if (!string && !in) {
                     RAX(cpu) = rreg(cpu->hvf_fd, HV_X86_RAX);
-                    hvf_handle_io(cpu, port, &RAX(cpu), 1, size, 1);
+                    hvf_handle_io(env, port, &RAX(cpu), 1, size, 1);
                     macvm_set_rip(cpu, rip + ins_len);
                     break;
                 }
@@ -851,7 +851,6 @@ again:
                 uint32_t edx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RDX);
 
                 if (ecx) {
-                    //DPRINTF("xsetbv: invalid index %d\n", ecx);
                     macvm_set_rip(cpu, rip + ins_len);
                     break;
                 }
@@ -892,7 +891,6 @@ again:
                 cr = exit_qual & 15;
                 reg = (exit_qual >> 8) & 15;
 
-                //DPRINTF("%lx: mov cr %d from %d %llx\n", rip, cr, reg, RRX(cpu, reg));
                 switch (cr) {
                     case 0x0: {
                         macvm_set_cr0(cpu->hvf_fd, RRX(cpu, reg));
@@ -915,7 +913,8 @@ again:
                         break;
                     }
                     default:
-                        ;//qemu_abort("%s: Unrecognized CR %d\n", __func__, cr);
+                        fprintf(stderr, "Unrecognized CR %d\n", cr);
+                        abort();
                 }
                 RIP(cpu) += ins_len;
                 store_regs(cpu);
@@ -928,7 +927,6 @@ again:
                 cpu->hvf_x86->fetch_rip = rip;
 
                 decode_instruction(cpu, &decode);
-                //DPRINTF("apic fetched %s, %x %x len %d\n", decode_cmd_to_string(decode.cmd), decode.opcode[0], decode.opcode[1], decode.len);
                 exec_instruction(cpu, &decode);
                 store_regs(cpu);
                 break;
@@ -939,18 +937,14 @@ again:
             }
             case EXIT_REASON_TASK_SWITCH: {
                 uint64_t vinfo = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_INFO);
-                //DPRINTF("%llx: task switch %lld, vector %lld, gate %lld\n", RIP(cpu), (exit_qual >> 30) & 0x3, vinfo & VECTORING_INFO_VECTOR_MASK, vinfo & VMCS_INTR_T_MASK);
                 x68_segment_selector sel = {.sel = exit_qual & 0xffff};
-                vmx_handle_task_switch(cpu, sel, (exit_qual >> 30) & 0x3, vinfo & VMCS_INTR_VALID, vinfo & VECTORING_INFO_VECTOR_MASK, vinfo & VMCS_INTR_T_MASK);
+                vmx_handle_task_switch(cpu, sel, (exit_qual >> 30) & 0x3,
+                 vinfo & VMCS_INTR_VALID, vinfo & VECTORING_INFO_VECTOR_MASK, vinfo & VMCS_INTR_T_MASK);
                 break;
             }
             case EXIT_REASON_TRIPLE_FAULT: {
-                addr_t gpa = rvmcs(cpu->hvf_fd, VMCS_GUEST_PHYSICAL_ADDRESS);
-
-                //DPRINTF("triple fault at %llx (%llx, %llx), cr0 %llx, qual %llx, gpa %llx, ins len %d, cpu %p\n",
-                        //linear_rip(cpu, rip), RIP(cpu), linear_addr(cpu, rip, REG_SEG_CS),
-                        //rvmcs(cpu->hvf_fd, VMCS_GUEST_CR0), exit_qual, gpa, ins_len, cpu);
-                //qemu_system_reset_request(); XXX
+                //addr_t gpa = rvmcs(cpu->hvf_fd, VMCS_GUEST_PHYSICAL_ADDRESS);
+                qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
                 usleep(1000 * 100);
                 ret = EXCP_INTERRUPT;
                 break;
@@ -981,16 +975,14 @@ static bool hvf_allowed;
 
 static int hvf_accel_init(MachineState *ms)
 {
-    int x, err;
+    int x;
     hv_return_t ret;
     HVFState *s;
 
-    if ( (ret = hv_vm_create(HV_VM_DEFAULT)) != HV_SUCCESS) {
-        err = print_err(ret);
-        return err;
-    }
+    ret = hv_vm_create(HV_VM_DEFAULT);
+    assert_hvf_ok(ret);
 
-    s = (HVFState *)g_malloc0(sizeof(HVFState));//HVF_STATE(ms->accelerator);
+    s = (HVFState *)g_malloc0(sizeof(HVFState));
  
     s->num_slots = 32;
     for (x = 0; x < s->num_slots; ++x) {
@@ -1014,7 +1006,7 @@ static void hvf_accel_class_init(ObjectClass *oc, void *data)
 }
 
 static const TypeInfo hvf_accel_type = {
-    .name = TYPE_HVF_ACCEL,//ACCEL_CLASS_NAME("hvf"),
+    .name = TYPE_HVF_ACCEL,
     .parent = TYPE_ACCEL,
     .class_init = hvf_accel_class_init,
 };

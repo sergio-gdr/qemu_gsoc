@@ -1452,9 +1452,6 @@ static void *qemu_hax_cpu_thread_fn(void *arg)
     return NULL;
 }
 
-static void dummy_signal(int sig)
-{
-}
 /* The HVF-specific vCPU thread function. This one should only run when the host
  * CPU supports the VMX "unrestricted guest" feature. */
 static void *qemu_hvf_cpu_thread_fn(void *arg)
@@ -1473,18 +1470,6 @@ static void *qemu_hvf_cpu_thread_fn(void *arg)
     cpu->thread_id = qemu_get_thread_id();
     cpu->can_do_io = 1;
     current_cpu = cpu;
-
-    // init cpu signals
-    sigset_t set;
-    struct sigaction sigact;
-
-    memset(&sigact, 0, sizeof(sigact));
-    sigact.sa_handler = dummy_signal;
-    sigaction(SIG_IPI, &sigact, NULL);
-
-    pthread_sigmask(SIG_BLOCK, NULL, &set);
-    sigdelset(&set, SIG_IPI);
-    sigdelset(&set, SIGBUS);
 
     hvf_init_vcpu(cpu);
 

@@ -49,7 +49,7 @@ struct hvf_vcpu_caps {
 
 int __hvf_set_memory(hvf_slot *);
 void hvf_set_phys_mem(MemoryRegionSection *, bool);
-int hvf_handle_io(CPUArchState *, uint16_t, void *,
+void hvf_handle_io(CPUArchState *, uint16_t, void *,
                   int, int, int);
 hvf_slot *hvf_find_overlap_slot(uint64_t, uint64_t);
 
@@ -75,15 +75,18 @@ int hvf_smp_cpu_exec(CPUState *);
 void hvf_cpu_synchronize_state(CPUState *);
 void hvf_cpu_synchronize_post_reset(CPUState *);
 void hvf_cpu_synchronize_post_init(CPUState *);
+void _hvf_cpu_synchronize_post_init(CPUState *, run_on_cpu_data);
 
-int hvf_vcpu_destroy(CPUState *);
+void hvf_vcpu_destroy(CPUState *);
 void hvf_raise_event(CPUState *);
 // void hvf_reset_vcpu_state(void *opaque);
 void vmx_reset_vcpu(CPUState *);
-void __hvf_cpu_synchronize_state(void *);
+void __hvf_cpu_synchronize_state(CPUState *, run_on_cpu_data);
+void __hvf_cpu_synchronize_post_reset(CPUState *, run_on_cpu_data);
 void vmx_update_tpr(CPUState *);
 void update_apic_tpr(CPUState *);
 int apic_get_highest_priority_irr(DeviceState *);
+int hvf_put_registers(CPUState *);
 
 #define TYPE_HVF_ACCEL ACCEL_CLASS_NAME("hvf")
 
