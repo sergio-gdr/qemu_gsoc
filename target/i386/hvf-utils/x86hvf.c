@@ -26,6 +26,7 @@
 #include "cpu.h"
 #include "x86_descr.h"
 #include "x86_decode.h"
+#include "xsave_helper.h"
 
 #include "hw/i386/apic_internal.h"
 
@@ -35,16 +36,16 @@
 #include <Hypervisor/hv_vmx.h>
 #include <stdint.h>
 
-void hvf_cpu_synchronize_state(struct CPUState* cpu_state);
-
-void hvf_set_segment(struct CPUState *cpu, struct vmx_segment *vmx_seg, SegmentCache *qseg, bool is_tr)
+void hvf_set_segment(struct CPUState *cpu, struct vmx_segment *vmx_seg,
+                     SegmentCache *qseg, bool is_tr)
 {
     vmx_seg->sel = qseg->selector;
     vmx_seg->base = qseg->base;
     vmx_seg->limit = qseg->limit;
 
     if (!qseg->selector && !x86_is_real(cpu) && !is_tr) {
-        // the TR register is usable after processor reset despite having a null selector
+        /* the TR register is usable after processor reset despite
+         * having a null selector */
         vmx_seg->ar = 1 << 16;
         return;
     }
@@ -78,51 +79,64 @@ void hvf_put_xsave(CPUState *cpu_state)
 
     int x;
     struct hvf_xsave_buf *xsave;
-    
-    xsave = X86_CPU(cpu_state)->env.kvm_xsave_buf;
-    memset(xsave, 0, sizeof(*xsave)); 
-    
-    memcpy(&xsave->data[4], &X86_CPU(cpu_state)->env.fpdp, sizeof(X86_CPU(cpu_state)->env.fpdp));
-    memcpy(&xsave->data[2], &X86_CPU(cpu_state)->env.fpip, sizeof(X86_CPU(cpu_state)->env.fpip));
-    memcpy(&xsave->data[8], &X86_CPU(cpu_state)->env.fpregs, sizeof(X86_CPU(cpu_state)->env.fpregs));
-    memcpy(&xsave->data[144], &X86_CPU(cpu_state)->env.ymmh_regs, sizeof(X86_CPU(cpu_state)->env.ymmh_regs));
-    memcpy(&xsave->data[288], &X86_CPU(cpu_state)->env.zmmh_regs, sizeof(X86_CPU(cpu_state)->env.zmmh_regs));
-    memcpy(&xsave->data[272], &X86_CPU(cpu_state)->env.opmask_regs, sizeof(X86_CPU(cpu_state)->env.opmask_regs));
-    memcpy(&xsave->data[240], &X86_CPU(cpu_state)->env.bnd_regs, sizeof(X86_CPU(cpu_state)->env.bnd_regs));
-    memcpy(&xsave->data[256], &X86_CPU(cpu_state)->env.bndcs_regs, sizeof(X86_CPU(cpu_state)->env.bndcs_regs));
-    memcpy(&xsave->data[416], &X86_CPU(cpu_state)->env.hi16_zmm_regs, sizeof(X86_CPU(cpu_state)->env.hi16_zmm_regs));
-    
-    xsave->data[0] = (uint16_t)X86_CPU(cpu_state)->env.fpuc;
-    xsave->data[0] |= (X86_CPU(cpu_state)->env.fpus << 16);
-    xsave->data[0] |= (X86_CPU(cpu_state)->env.fpstt & 7) << 11;
-    
-    for (x = 0; x < 8; ++x)
-        xsave->data[1] |= ((!X86_CPU(cpu_state)->env.fptags[x]) << x);
-    xsave->data[1] |= (uint32_t)(X86_CPU(cpu_state)->env.fpop << 16);
-    
-    memcpy(&xsave->data[40], &X86_CPU(cpu_state)->env.xmm_regs, sizeof(X86_CPU(cpu_state)->env.xmm_regs));
-    
-    xsave->data[6] = X86_CPU(cpu_state)->env.mxcsr;
-    *(uint64_t *)&xsave->data[128] = X86_CPU(cpu_state)->env.xstate_bv;
-    
-    if (hv_vcpu_write_fpstate(cpu_state->hvf_fd, xsave->data, 4096)){
+
+    xsave = X86_CPU(cpu_state)->env.xsave_buf;
+
+    x86_cpu_xsave_all_areas(X86_CPU(cpu_state), xsave);
+
+//   memset(xsave, 0, sizeof(*xsave));
+//
+//   memcpy(&xsave->data[4], &X86_CPU(cpu_state)->env.fpdp,
+//           sizeof(X86_CPU(cpu_state)->env.fpdp));
+//   memcpy(&xsave->data[2], &X86_CPU(cpu_state)->env.fpip,
+//           sizeof(X86_CPU(cpu_state)->env.fpip));
+//   memcpy(&xsave->data[8], &X86_CPU(cpu_state)->env.fpregs,
+//           sizeof(X86_CPU(cpu_state)->env.fpregs));
+//   memcpy(&xsave->data[144], &X86_CPU(cpu_state)->env.ymmh_regs,
+//           sizeof(X86_CPU(cpu_state)->env.ymmh_regs));
+//   memcpy(&xsave->data[288], &X86_CPU(cpu_state)->env.zmmh_regs,
+//           sizeof(X86_CPU(cpu_state)->env.zmmh_regs));
+//   memcpy(&xsave->data[272], &X86_CPU(cpu_state)->env.opmask_regs,
+//           sizeof(X86_CPU(cpu_state)->env.opmask_regs));
+//   memcpy(&xsave->data[240], &X86_CPU(cpu_state)->env.bnd_regs,
+//           sizeof(X86_CPU(cpu_state)->env.bnd_regs));
+//   memcpy(&xsave->data[256], &X86_CPU(cpu_state)->env.bndcs_regs,
+//           sizeof(X86_CPU(cpu_state)->env.bndcs_regs));
+//   memcpy(&xsave->data[416], &X86_CPU(cpu_state)->env.hi16_zmm_regs,
+//           sizeof(X86_CPU(cpu_state)->env.hi16_zmm_regs));
+//
+//   xsave->data[0] = (uint16_t)X86_CPU(cpu_state)->env.fpuc;
+//   xsave->data[0] |= (X86_CPU(cpu_state)->env.fpus << 16);
+//   xsave->data[0] |= (X86_CPU(cpu_state)->env.fpstt & 7) << 11;
+//
+//   for (x = 0; x < 8; ++x) {
+//       xsave->data[1] |= ((!X86_CPU(cpu_state)->env.fptags[x]) << x);
+//   }
+//   xsave->data[1] |= (uint32_t)(X86_CPU(cpu_state)->env.fpop << 16);
+//
+//   memcpy(&xsave->data[40], &X86_CPU(cpu_state)->env.xmm_regs,
+//           sizeof(X86_CPU(cpu_state)->env.xmm_regs));
+//
+//   xsave->data[6] = X86_CPU(cpu_state)->env.mxcsr;
+//   *(uint64_t *)&xsave->data[128] = X86_CPU(cpu_state)->env.xstate_bv;
+
+    if (hv_vcpu_write_fpstate(cpu_state->hvf_fd, xsave->data, 4096)) {
         abort();
     }
 }
 
-void vmx_update_tpr(CPUState *cpu);
 void hvf_put_segments(CPUState *cpu_state)
 {
     CPUX86State *env = &X86_CPU(cpu_state)->env;
     struct vmx_segment seg;
-    
+
     wvmcs(cpu_state->hvf_fd, VMCS_GUEST_IDTR_LIMIT, env->idt.limit);
     wvmcs(cpu_state->hvf_fd, VMCS_GUEST_IDTR_BASE, env->idt.base);
 
     wvmcs(cpu_state->hvf_fd, VMCS_GUEST_GDTR_LIMIT, env->gdt.limit);
     wvmcs(cpu_state->hvf_fd, VMCS_GUEST_GDTR_BASE, env->gdt.base);
 
-    //wvmcs(cpu_state->hvf_fd, VMCS_GUEST_CR2, env->cr[2]);
+    /* wvmcs(cpu_state->hvf_fd, VMCS_GUEST_CR2, env->cr[2]); */
     wvmcs(cpu_state->hvf_fd, VMCS_GUEST_CR3, env->cr[3]);
     vmx_update_tpr(cpu_state);
     wvmcs(cpu_state->hvf_fd, VMCS_GUEST_IA32_EFER, env->efer);
@@ -132,7 +146,7 @@ void hvf_put_segments(CPUState *cpu_state)
 
     hvf_set_segment(cpu_state, &seg, &env->segs[R_CS], false);
     vmx_write_segment_descriptor(cpu_state, &seg, REG_SEG_CS);
-    
+
     hvf_set_segment(cpu_state, &seg, &env->segs[R_DS], false);
     vmx_write_segment_descriptor(cpu_state, &seg, REG_SEG_DS);
 
@@ -153,17 +167,20 @@ void hvf_put_segments(CPUState *cpu_state)
 
     hvf_set_segment(cpu_state, &seg, &env->ldt, false);
     vmx_write_segment_descriptor(cpu_state, &seg, REG_SEG_LDTR);
-    
+
     hv_vcpu_flush(cpu_state->hvf_fd);
 }
-    
+
 void hvf_put_msrs(CPUState *cpu_state)
 {
     CPUX86State *env = &X86_CPU(cpu_state)->env;
 
-    hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_CS, env->sysenter_cs);
-    hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_ESP, env->sysenter_esp);
-    hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_EIP, env->sysenter_eip);
+    hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_CS,
+                      env->sysenter_cs);
+    hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_ESP,
+                      env->sysenter_esp);
+    hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_EIP,
+                      env->sysenter_eip);
 
     hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_STAR, env->star);
 
@@ -177,8 +194,8 @@ void hvf_put_msrs(CPUState *cpu_state)
     hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_GSBASE, env->segs[R_GS].base);
     hv_vcpu_write_msr(cpu_state->hvf_fd, MSR_FSBASE, env->segs[R_FS].base);
 
-    // if (!osx_is_sierra())
-    //     wvmcs(cpu_state->hvf_fd, VMCS_TSC_OFFSET, env->tsc - rdtscp());
+    /* if (!osx_is_sierra())
+         wvmcs(cpu_state->hvf_fd, VMCS_TSC_OFFSET, env->tsc - rdtscp());*/
     hv_vm_sync_tsc(env->tsc);
 }
 
@@ -187,37 +204,49 @@ void hvf_get_xsave(CPUState *cpu_state)
 {
     int x;
     struct hvf_xsave_buf *xsave;
-    
-    xsave = X86_CPU(cpu_state)->env.kvm_xsave_buf;
-    
+
+    xsave = X86_CPU(cpu_state)->env.xsave_buf;
+
     if (hv_vcpu_read_fpstate(cpu_state->hvf_fd, xsave->data, 4096)) {
         abort();
     }
 
-    memcpy(&X86_CPU(cpu_state)->env.fpdp, &xsave->data[4], sizeof(X86_CPU(cpu_state)->env.fpdp));
-    memcpy(&X86_CPU(cpu_state)->env.fpip, &xsave->data[2], sizeof(X86_CPU(cpu_state)->env.fpip));
-    memcpy(&X86_CPU(cpu_state)->env.fpregs, &xsave->data[8], sizeof(X86_CPU(cpu_state)->env.fpregs));
-    memcpy(&X86_CPU(cpu_state)->env.ymmh_regs, &xsave->data[144], sizeof(X86_CPU(cpu_state)->env.ymmh_regs));
-    memcpy(&X86_CPU(cpu_state)->env.zmmh_regs, &xsave->data[288], sizeof(X86_CPU(cpu_state)->env.zmmh_regs));
-    memcpy(&X86_CPU(cpu_state)->env.opmask_regs, &xsave->data[272], sizeof(X86_CPU(cpu_state)->env.opmask_regs));
-    memcpy(&X86_CPU(cpu_state)->env.bnd_regs, &xsave->data[240], sizeof(X86_CPU(cpu_state)->env.bnd_regs));
-    memcpy(&X86_CPU(cpu_state)->env.bndcs_regs, &xsave->data[256], sizeof(X86_CPU(cpu_state)->env.bndcs_regs));
-    memcpy(&X86_CPU(cpu_state)->env.hi16_zmm_regs, &xsave->data[416], sizeof(X86_CPU(cpu_state)->env.hi16_zmm_regs));
-    
-    
-    X86_CPU(cpu_state)->env.fpuc = (uint16_t)xsave->data[0];
-    X86_CPU(cpu_state)->env.fpus = (uint16_t)(xsave->data[0] >> 16);
-    X86_CPU(cpu_state)->env.fpstt = (X86_CPU(cpu_state)->env.fpus >> 11) & 7;
-    X86_CPU(cpu_state)->env.fpop = (uint16_t)(xsave->data[1] >> 16);
-    
-    for (x = 0; x < 8; ++x)
-       X86_CPU(cpu_state)->env.fptags[x] =
-        ((((uint16_t)xsave->data[1] >> x) & 1) == 0);
-    
-    memcpy(&X86_CPU(cpu_state)->env.xmm_regs, &xsave->data[40], sizeof(X86_CPU(cpu_state)->env.xmm_regs));
+    x86_cpu_xrstor_all_areas(X86_CPU(cpu_state), xsave);
 
-    X86_CPU(cpu_state)->env.mxcsr = xsave->data[6];
-    X86_CPU(cpu_state)->env.xstate_bv = *(uint64_t *)&xsave->data[128];
+//   memcpy(&X86_CPU(cpu_state)->env.fpdp, &xsave->data[4],
+//           sizeof(X86_CPU(cpu_state)->env.fpdp));
+//   memcpy(&X86_CPU(cpu_state)->env.fpip, &xsave->data[2],
+//           sizeof(X86_CPU(cpu_state)->env.fpip));
+//   memcpy(&X86_CPU(cpu_state)->env.fpregs, &xsave->data[8],
+//           sizeof(X86_CPU(cpu_state)->env.fpregs));
+//   memcpy(&X86_CPU(cpu_state)->env.ymmh_regs, &xsave->data[144],
+//           sizeof(X86_CPU(cpu_state)->env.ymmh_regs));
+//   memcpy(&X86_CPU(cpu_state)->env.zmmh_regs, &xsave->data[288],
+//           sizeof(X86_CPU(cpu_state)->env.zmmh_regs));
+//   memcpy(&X86_CPU(cpu_state)->env.opmask_regs, &xsave->data[272],
+//           sizeof(X86_CPU(cpu_state)->env.opmask_regs));
+//   memcpy(&X86_CPU(cpu_state)->env.bnd_regs, &xsave->data[240],
+//           sizeof(X86_CPU(cpu_state)->env.bnd_regs));
+//   memcpy(&X86_CPU(cpu_state)->env.bndcs_regs, &xsave->data[256],
+//           sizeof(X86_CPU(cpu_state)->env.bndcs_regs));
+//   memcpy(&X86_CPU(cpu_state)->env.hi16_zmm_regs, &xsave->data[416],
+//           sizeof(X86_CPU(cpu_state)->env.hi16_zmm_regs));
+//
+//   X86_CPU(cpu_state)->env.fpuc = (uint16_t)xsave->data[0];
+//   X86_CPU(cpu_state)->env.fpus = (uint16_t)(xsave->data[0] >> 16);
+//   X86_CPU(cpu_state)->env.fpstt = (X86_CPU(cpu_state)->env.fpus >> 11) & 7;
+//   X86_CPU(cpu_state)->env.fpop = (uint16_t)(xsave->data[1] >> 16);
+//
+//   for (x = 0; x < 8; ++x) {
+//       X86_CPU(cpu_state)->env.fptags[x] = ((((uint16_t)xsave->data[1] >> x)
+//                                           & 1) == 0);
+//   }
+//
+//   memcpy(&X86_CPU(cpu_state)->env.xmm_regs, &xsave->data[40],
+//           sizeof(X86_CPU(cpu_state)->env.xmm_regs));
+//
+//   X86_CPU(cpu_state)->env.mxcsr = xsave->data[6];
+//   X86_CPU(cpu_state)->env.xstate_bv = *(uint64_t *)&xsave->data[128];
 }
 
 void hvf_get_segments(CPUState *cpu_state)
@@ -230,7 +259,7 @@ void hvf_get_segments(CPUState *cpu_state)
 
     vmx_read_segment_descriptor(cpu_state, &seg, REG_SEG_CS);
     hvf_get_segment(&env->segs[R_CS], &seg);
-    
+
     vmx_read_segment_descriptor(cpu_state, &seg, REG_SEG_DS);
     hvf_get_segment(&env->segs[R_DS], &seg);
 
@@ -261,7 +290,7 @@ void hvf_get_segments(CPUState *cpu_state)
     env->cr[2] = 0;
     env->cr[3] = rvmcs(cpu_state->hvf_fd, VMCS_GUEST_CR3);
     env->cr[4] = rvmcs(cpu_state->hvf_fd, VMCS_GUEST_CR4);
-    
+
     env->efer = rvmcs(cpu_state->hvf_fd, VMCS_GUEST_IA32_EFER);
 }
 
@@ -269,10 +298,10 @@ void hvf_get_msrs(CPUState *cpu_state)
 {
     CPUX86State *env = &X86_CPU(cpu_state)->env;
     uint64_t tmp;
-    
+
     hv_vcpu_read_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_CS, &tmp);
     env->sysenter_cs = tmp;
-    
+
     hv_vcpu_read_msr(cpu_state->hvf_fd, MSR_IA32_SYSENTER_ESP, &tmp);
     env->sysenter_esp = tmp;
 
@@ -289,7 +318,7 @@ void hvf_get_msrs(CPUState *cpu_state)
 #endif
 
     hv_vcpu_read_msr(cpu_state->hvf_fd, MSR_IA32_APICBASE, &tmp);
-    
+
     env->tsc = rdtscp() + rvmcs(cpu_state->hvf_fd, VMCS_TSC_OFFSET);
 }
 
@@ -316,15 +345,15 @@ int hvf_put_registers(CPUState *cpu_state)
     wreg(cpu_state->hvf_fd, HV_X86_R15, env->regs[15]);
     wreg(cpu_state->hvf_fd, HV_X86_RFLAGS, env->eflags);
     wreg(cpu_state->hvf_fd, HV_X86_RIP, env->eip);
-   
+
     wreg(cpu_state->hvf_fd, HV_X86_XCR0, env->xcr0);
-    
+
     hvf_put_xsave(cpu_state);
-    
+
     hvf_put_segments(cpu_state);
-    
+
     hvf_put_msrs(cpu_state);
-    
+
     wreg(cpu_state->hvf_fd, HV_X86_DR0, env->dr[0]);
     wreg(cpu_state->hvf_fd, HV_X86_DR1, env->dr[1]);
     wreg(cpu_state->hvf_fd, HV_X86_DR2, env->dr[2]);
@@ -333,7 +362,7 @@ int hvf_put_registers(CPUState *cpu_state)
     wreg(cpu_state->hvf_fd, HV_X86_DR5, env->dr[5]);
     wreg(cpu_state->hvf_fd, HV_X86_DR6, env->dr[6]);
     wreg(cpu_state->hvf_fd, HV_X86_DR7, env->dr[7]);
-    
+
     return 0;
 }
 
@@ -359,16 +388,16 @@ int hvf_get_registers(CPUState *cpu_state)
     env->regs[13] = rreg(cpu_state->hvf_fd, HV_X86_R13);
     env->regs[14] = rreg(cpu_state->hvf_fd, HV_X86_R14);
     env->regs[15] = rreg(cpu_state->hvf_fd, HV_X86_R15);
-    
+
     env->eflags = rreg(cpu_state->hvf_fd, HV_X86_RFLAGS);
     env->eip = rreg(cpu_state->hvf_fd, HV_X86_RIP);
-   
+
     hvf_get_xsave(cpu_state);
     env->xcr0 = rreg(cpu_state->hvf_fd, HV_X86_XCR0);
-    
+
     hvf_get_segments(cpu_state);
     hvf_get_msrs(cpu_state);
-    
+
     env->dr[0] = rreg(cpu_state->hvf_fd, HV_X86_DR0);
     env->dr[1] = rreg(cpu_state->hvf_fd, HV_X86_DR1);
     env->dr[2] = rreg(cpu_state->hvf_fd, HV_X86_DR2);
@@ -377,7 +406,7 @@ int hvf_get_registers(CPUState *cpu_state)
     env->dr[5] = rreg(cpu_state->hvf_fd, HV_X86_DR5);
     env->dr[6] = rreg(cpu_state->hvf_fd, HV_X86_DR6);
     env->dr[7] = rreg(cpu_state->hvf_fd, HV_X86_DR7);
-    
+
     return 0;
 }
 
@@ -385,14 +414,16 @@ static void vmx_set_int_window_exiting(CPUState *cpu)
 {
      uint64_t val;
      val = rvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS);
-     wvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS, val | VMCS_PRI_PROC_BASED_CTLS_INT_WINDOW_EXITING);
+     wvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS, val |
+             VMCS_PRI_PROC_BASED_CTLS_INT_WINDOW_EXITING);
 }
 
 void vmx_clear_int_window_exiting(CPUState *cpu)
 {
      uint64_t val;
      val = rvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS);
-     wvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS, val & ~VMCS_PRI_PROC_BASED_CTLS_INT_WINDOW_EXITING);
+     wvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS, val &
+             ~VMCS_PRI_PROC_BASED_CTLS_INT_WINDOW_EXITING);
 }
 
 #define NMI_VEC 2
@@ -400,28 +431,30 @@ void vmx_clear_int_window_exiting(CPUState *cpu)
 void hvf_inject_interrupts(CPUState *cpu_state)
 {
     X86CPU *x86cpu = X86_CPU(cpu_state);
-    int allow_nmi = !(rvmcs(cpu_state->hvf_fd, VMCS_GUEST_INTERRUPTIBILITY) & VMCS_INTERRUPTIBILITY_NMI_BLOCKING);
+    int allow_nmi = !(rvmcs(cpu_state->hvf_fd, VMCS_GUEST_INTERRUPTIBILITY) &
+            VMCS_INTERRUPTIBILITY_NMI_BLOCKING);
 
     uint64_t idt_info = rvmcs(cpu_state->hvf_fd, VMCS_IDT_VECTORING_INFO);
     uint64_t info = 0;
-    
+
     if (idt_info & VMCS_IDT_VEC_VALID) {
         uint8_t vector = idt_info & 0xff;
         uint64_t intr_type = idt_info & VMCS_INTR_T_MASK;
         info = idt_info;
-        
+
         uint64_t reason = rvmcs(cpu_state->hvf_fd, VMCS_EXIT_REASON);
         if (intr_type == VMCS_INTR_T_NMI && reason != EXIT_REASON_TASK_SWITCH) {
             allow_nmi = 1;
             vmx_clear_nmi_blocking(cpu_state);
         }
-        
+
         if ((allow_nmi || intr_type != VMCS_INTR_T_NMI)) {
             info &= ~(1 << 12); /* clear undefined bit */
             if (intr_type == VMCS_INTR_T_SWINTR ||
                 intr_type == VMCS_INTR_T_PRIV_SWEXCEPTION ||
                 intr_type == VMCS_INTR_T_SWEXCEPTION) {
-                uint64_t ins_len = rvmcs(cpu_state->hvf_fd, VMCS_EXIT_INSTRUCTION_LENGTH);
+                uint64_t ins_len = rvmcs(cpu_state->hvf_fd,
+                                         VMCS_EXIT_INSTRUCTION_LENGTH);
                 wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INST_LENGTH, ins_len);
             }
             if (vector == EXCEPTION_BP || vector == EXCEPTION_OF) {
@@ -431,16 +464,17 @@ void hvf_inject_interrupts(CPUState *cpu_state)
                  */
                 info &= ~VMCS_INTR_T_MASK;
                 info |= VMCS_INTR_T_SWEXCEPTION;
-                uint64_t ins_len = rvmcs(cpu_state->hvf_fd, VMCS_EXIT_INSTRUCTION_LENGTH);
+                uint64_t ins_len = rvmcs(cpu_state->hvf_fd,
+                                         VMCS_EXIT_INSTRUCTION_LENGTH);
                 wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INST_LENGTH, ins_len);
             }
-            
+
             uint64_t err = 0;
             if (idt_info & VMCS_INTR_DEL_ERRCODE) {
                 err = rvmcs(cpu_state->hvf_fd, VMCS_IDT_VECTORING_ERROR);
                 wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_EXCEPTION_ERROR, err);
             }
-            //printf("reinject  %lx err %d\n", info, err);
+            /*printf("reinject  %lx err %d\n", info, err);*/
             wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INTR_INFO, info);
         };
     }
@@ -455,22 +489,26 @@ void hvf_inject_interrupts(CPUState *cpu_state)
         }
     }
 
-    if (cpu_state->hvf_x86->interruptable && (cpu_state->interrupt_request & CPU_INTERRUPT_HARD) &&
+    if (cpu_state->hvf_x86->interruptable &&
+        (cpu_state->interrupt_request & CPU_INTERRUPT_HARD) &&
         (EFLAGS(cpu_state) & IF_MASK) && !(info & VMCS_INTR_VALID)) {
         int line = cpu_get_pic_interrupt(&x86cpu->env);
         cpu_state->interrupt_request &= ~CPU_INTERRUPT_HARD;
-        if (line >= 0)
-            wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INTR_INFO, line | VMCS_INTR_VALID | VMCS_INTR_T_HWINTR);
+        if (line >= 0) {
+            wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INTR_INFO, line |
+                  VMCS_INTR_VALID | VMCS_INTR_T_HWINTR);
+        }
     }
-    if (cpu_state->interrupt_request & CPU_INTERRUPT_HARD)
+    if (cpu_state->interrupt_request & CPU_INTERRUPT_HARD) {
         vmx_set_int_window_exiting(cpu_state);
+    }
 }
 
 int hvf_process_events(CPUState *cpu_state)
 {
     X86CPU *cpu = X86_CPU(cpu_state);
     CPUX86State *env = &cpu->env;
-    
+
     EFLAGS(cpu_state) = rreg(cpu_state->hvf_fd, HV_X86_RFLAGS);
 
     if (cpu_state->interrupt_request & CPU_INTERRUPT_INIT) {
@@ -482,7 +520,8 @@ int hvf_process_events(CPUState *cpu_state)
         cpu_state->interrupt_request &= ~CPU_INTERRUPT_POLL;
         apic_poll_irq(cpu->apic_state);
     }
-    if (((cpu_state->interrupt_request & CPU_INTERRUPT_HARD) && (EFLAGS(cpu_state) & IF_MASK)) ||
+    if (((cpu_state->interrupt_request & CPU_INTERRUPT_HARD) &&
+        (EFLAGS(cpu_state) & IF_MASK)) ||
         (cpu_state->interrupt_request & CPU_INTERRUPT_NMI)) {
         cpu_state->halted = 0;
     }
