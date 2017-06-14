@@ -305,6 +305,19 @@ static void apic_set_tpr(APICCommonState *s, uint8_t val)
     }
 }
 
+int apic_get_highest_priority_irr(DeviceState *dev)
+{
+    APICCommonState *s;
+    APICCommonClass *info;
+
+    if (!dev) {
+        return -1;
+    }
+    s = APIC_COMMON(dev);
+    info = APIC_COMMON_GET_CLASS(s);
+    return get_highest_priority_int(s->irr);
+}
+
 static uint8_t apic_get_tpr(APICCommonState *s)
 {
     apic_sync_vapic(s, SYNC_FROM_VAPIC);

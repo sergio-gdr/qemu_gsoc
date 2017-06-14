@@ -27,6 +27,7 @@
 #include "sysemu/kvm_int.h"
 #include "kvm_i386.h"
 #include "hyperv.h"
+#include "xsave_helper.h"
 
 #include "exec/gdbstub.h"
 #include "qemu/host-utils.h"
@@ -1011,7 +1012,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
     }
 
     if (has_xsave) {
-        env->kvm_xsave_buf = qemu_memalign(4096, sizeof(struct kvm_xsave));
+        env->xsave_buf = qemu_memalign(4096, sizeof(struct xsave_buf));
     }
     cpu->kvm_msr_buf = g_malloc0(MSR_BUF_SIZE);
 
