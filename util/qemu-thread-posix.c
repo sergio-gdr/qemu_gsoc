@@ -30,15 +30,6 @@ void qemu_thread_naming(bool enable)
 #endif
 }
 
-uint64_t qemu_pthread_threadid_np(pthread_t thread)
-{
-    uint64_t thread_id;
-
-    pthread_threadid_np(thread, &thread_id);
-
-    return thread_id;
-}
-
 static void error_exit(int err, const char *msg)
 {
     fprintf(stderr, "qemu: %s: %s\n", msg, strerror(err));
@@ -75,7 +66,7 @@ void qemu_mutex_lock(QemuMutex *mutex)
     if (err)
         error_exit(err, __func__);
 
-    trace_qemu_mutex_locked(mutex, qemu_pthread_threadid_np(pthread_self()));
+    trace_qemu_mutex_locked(mutex);
 }
 
 int qemu_mutex_trylock(QemuMutex *mutex)
@@ -85,7 +76,7 @@ int qemu_mutex_trylock(QemuMutex *mutex)
     assert(mutex->initialized);
     err = pthread_mutex_trylock(&mutex->lock);
     if (err == 0) {
-        trace_qemu_mutex_locked(mutex, qemu_pthread_threadid_np(pthread_self()));
+        trace_qemu_mutex_locked(mutex);
         return 0;
     }
     if (err != EBUSY) {
@@ -168,7 +159,7 @@ void qemu_cond_wait(QemuCond *cond, QemuMutex *mutex)
     assert(cond->initialized);
     trace_qemu_mutex_unlocked(mutex);
     err = pthread_cond_wait(&cond->cond, &mutex->lock);
-    trace_qemu_mutex_locked(mutex, qemu_pthread_threadid_np(pthread_self()));
+    trace_qemu_mutex_locked(mutex);
     if (err)
         error_exit(err, __func__);
 }

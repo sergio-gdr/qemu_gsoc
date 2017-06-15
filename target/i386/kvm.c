@@ -1408,7 +1408,7 @@ static int kvm_put_fpu(X86CPU *cpu)
 #define XSAVE_PKRU        672
 
 #define XSAVE_BYTE_OFFSET(word_offset) \
-    ((word_offset) * sizeof(((struct kvm_xsave *)0)->region[0]))
+    ((word_offset) * sizeof(((struct xsave_buf *)0)->region[0]))
 
 #define ASSERT_OFFSET(word_offset, field) \
     QEMU_BUILD_BUG_ON(XSAVE_BYTE_OFFSET(word_offset) != \

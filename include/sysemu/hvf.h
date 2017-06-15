@@ -20,10 +20,12 @@
 #include "qemu/bitops.h"
 #include "exec/memory.h"
 #include "sysemu/accel.h"
+
+#ifdef CONFIG_HVF
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
 #include <Hypervisor/hv_error.h>
-
+#endif
 
 typedef struct hvf_slot {
     uint64_t start;
