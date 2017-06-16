@@ -1325,8 +1325,8 @@ struct kvm_s390_ucas_mapping {
  */
 #define KVM_ENABLE_CAP            _IOW(KVMIO,  0xa3, struct kvm_enable_cap)
 /* Available with KVM_CAP_XSAVE */
-#define KVM_GET_XSAVE		  _IOR(KVMIO,  0xa4, struct xsave_buf)
-#define KVM_SET_XSAVE		  _IOW(KVMIO,  0xa5, struct xsave_buf)
+#define KVM_GET_XSAVE		  _IOR(KVMIO,  0xa4, struct kvm_xsave)
+#define KVM_SET_XSAVE		  _IOW(KVMIO,  0xa5, struct kvm_xsave)
 /* Available with KVM_CAP_XCRS */
 #define KVM_GET_XCRS		  _IOR(KVMIO,  0xa6, struct kvm_xcrs)
 #define KVM_SET_XCRS		  _IOW(KVMIO,  0xa7, struct kvm_xcrs)

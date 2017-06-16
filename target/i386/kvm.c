@@ -27,7 +27,6 @@
 #include "sysemu/kvm_int.h"
 #include "kvm_i386.h"
 #include "hyperv.h"
-#include "xsave_helper.h"
 
 #include "exec/gdbstub.h"
 #include "qemu/host-utils.h"
@@ -1012,7 +1011,7 @@ int kvm_arch_init_vcpu(CPUState *cs)
     }
 
     if (has_xsave) {
-        env->xsave_buf = qemu_memalign(4096, sizeof(struct xsave_buf));
+        env->kvm_xsave_buf = qemu_memalign(4096, sizeof(struct kvm_xsave));
     }
     cpu->kvm_msr_buf = g_malloc0(MSR_BUF_SIZE);
 
@@ -1408,7 +1407,7 @@ static int kvm_put_fpu(X86CPU *cpu)
 #define XSAVE_PKRU        672
 
 #define XSAVE_BYTE_OFFSET(word_offset) \
-    ((word_offset) * sizeof(((struct xsave_buf *)0)->region[0]))
+    ((word_offset) * sizeof(((struct kvm_xsave *)0)->region[0]))
 
 #define ASSERT_OFFSET(word_offset, field) \
     QEMU_BUILD_BUG_ON(XSAVE_BYTE_OFFSET(word_offset) != \
@@ -1440,6 +1439,11 @@ static int kvm_put_xsave(X86CPU *cpu)
     }
     x86_cpu_xsave_all_areas(cpu, xsave);
 
+#ifdef TARGET_X86_64
+    memcpy(&xsave->hi16_zmm_state.hi16_zmm, &env->xmm_regs[16],
+            16 * sizeof env->xmm_regs[16]);
+    memcpy(&xsave->pkru_state, &env->pkru, sizeof env->pkru);
+#endif
     return kvm_vcpu_ioctl(CPU(cpu), KVM_SET_XSAVE, xsave);
 }
 

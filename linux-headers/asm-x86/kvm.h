@@ -333,6 +333,11 @@ struct kvm_debugregs {
 	__u64 reserved[9];
 };
 
+/* for KVM_CAP_XSAVE */
+struct kvm_xsave {
+	__u32 region[1024];
+};
+
 #define KVM_MAX_XCRS	16
 
 struct kvm_xcr {

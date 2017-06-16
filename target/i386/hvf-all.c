@@ -180,10 +180,10 @@ void hvf_set_phys_mem(MemoryRegionSection *section, bool add)
 }
 
 /* Find first bit starting from msb */
-static int apic_fls_bit(uint32_t value)
+/*static int apic_fls_bit(uint32_t value)
 {
     return 31 - clz32(value);
-}
+}*/
 
 /* Find first bit starting from lsb
 static int apic_ffs_bit(uint32_t value)
@@ -672,7 +672,7 @@ int hvf_init_vcpu(CPUState *cpu)
     vmx_reset_vcpu(cpu);
 
     x86cpu = X86_CPU(cpu);
-    x86cpu->env.xsave_buf = qemu_memalign(4096,
+    x86cpu->env.kvm_xsave_buf = qemu_memalign(4096,
                                  sizeof(struct hvf_xsave_buf));
 
     hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_STAR, 1);
