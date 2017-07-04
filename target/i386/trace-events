@@ -7,5 +7,5 @@ kvm_x86_remove_msi_route(int virq) "Removing route entry for virq %d"
 kvm_x86_update_msi_routes(int num) "Updated %d MSI routes"
 
 # target/i386/hvf-all.c
-hvf_vm_exit(uint64_t exit_reas, uint64_t exit_qual) "VM exit: reason=%"PRIu64", qualification=%"PRIu64
+hvf_vm_exit(uint64_t exit_reas, uint64_t exit_qual, uint64_t rip) "VM exit: reason=%"PRIu64", qualification=0x%x , RIP: 0x%x"
 hvf_vm_exit_gpa(uint64_t gpa) "Guest Physical Address 0x%"PRIx64

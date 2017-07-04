@@ -22,6 +22,7 @@
 #include "cpu.h"
 #include "exec/exec-all.h"
 #include "sysemu/kvm.h"
+#include "sysemu/hvf.h"
 #include "sysemu/cpus.h"
 #include "kvm_i386.h"
 
@@ -611,6 +612,15 @@ static uint32_t xsave_area_size(uint64_t mask)
         }
     }
     return ret;
+}
+
+static inline bool accel_uses_host_cpuid()
+{
+    if (kvm_enabled() || hvf_enabled()) {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 static inline uint64_t x86_cpu_xsave_components(X86CPU *cpu)
@@ -1632,6 +1642,7 @@ static void max_x86_cpu_initfn(Object *obj)
      */
     cpu->max_features = true;
 
+    /* TODO: implement for hvf */
     if (kvm_enabled()) {
         X86CPUDefinition host_cpudef = { };
         uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
@@ -1680,17 +1691,24 @@ static const TypeInfo max_x86_cpu_type_info = {
 };
 
 #ifdef CONFIG_KVM
-
+#elif CONFIG_HVF
 static void host_x86_cpu_class_init(ObjectClass *oc, void *data)
 {
     X86CPUClass *xcc = X86_CPU_CLASS(oc);
 
-    xcc->kvm_required = true;
+    xcc->host_cpuid_required = true;
     xcc->ordering = 8;
 
-    xcc->model_description =
-        "KVM processor with all supported host features "
-        "(only available in KVM mode)";
+    if (kvm_enabled()) {
+        xcc->model_description =
+            "KVM processor with all supported host features ";
+    } else if (hvf_enabled()) {
+        xcc->model_description =
+            "HVF processor with all supported host features ";
+    } else {
+        fprintf(stderr, "accelerator hypervisor enabled is required");
+        abort();
+    }
 }
 
 static const TypeInfo host_x86_cpu_type_info = {
@@ -1712,7 +1730,7 @@ static void report_unavailable_features(FeatureWord w, uint32_t mask)
             assert(reg);
             fprintf(stderr, "warning: %s doesn't support requested feature: "
                 "CPUID.%02XH:%s%s%s [bit %d]\n",
-                kvm_enabled() ? "host" : "TCG",
+                accel_uses_host_cpuid() ? "host" : "TCG",
                 f->cpuid_eax, reg,
                 f->feat_names[i] ? "." : "",
                 f->feat_names[i] ? f->feat_names[i] : "", i);
@@ -2163,7 +2181,7 @@ static void x86_cpu_class_check_missing_features(X86CPUClass *xcc,
     Error *err = NULL;
     strList **next = missing_feats;
 
-    if (xcc->kvm_required && !kvm_enabled()) {
+    if (xcc->host_cpuid_required && !accel_uses_host_cpuid()) {
         strList *new = g_new0(strList, 1);
         new->value = g_strdup("kvm");;
         *missing_feats = new;
@@ -2321,6 +2339,7 @@ static uint32_t x86_cpu_get_supported_feature_word(FeatureWord w,
     FeatureWordInfo *wi = &feature_word_info[w];
     uint32_t r;
 
+    /* TODO: implement for hvf */
     if (kvm_enabled()) {
         r = kvm_arch_get_supported_cpuid(kvm_state, wi->cpuid_eax,
                                                     wi->cpuid_ecx,
@@ -2384,6 +2403,7 @@ static void x86_cpu_load_def(X86CPU *cpu, X86CPUDefinition *def, Error **errp)
     }
 
     /* Special cases not set in the X86CPUDefinition structs: */
+    /* TODO: implement for hvf */
     if (kvm_enabled()) {
         if (!kvm_irqchip_in_kernel()) {
             x86_cpu_change_kvm_default("x2apic", "off");
@@ -2404,7 +2424,7 @@ static void x86_cpu_load_def(X86CPU *cpu, X86CPUDefinition *def, Error **errp)
      * when doing cross vendor migration
      */
     vendor = def->vendor;
-    if (kvm_enabled()) {
+    if (accel_uses_host_cpuid()) {
         uint32_t  ebx = 0, ecx = 0, edx = 0;
         host_cpuid(0, 0, NULL, &ebx, &ecx, &edx);
         x86_cpu_vendor_words2str(host_vendor, ebx, edx, ecx);
@@ -2682,6 +2702,8 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
     uint32_t limit;
     uint32_t signature[3];
 
+    printf("IN eax: 0x%x\n", index);
+
     /* Calculate & apply limits for different index ranges */
     if (index >= 0xC0000000) {
         limit = env->cpuid_xlevel2;
@@ -2853,6 +2875,7 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         break;
     case 0xA:
         /* Architectural Performance Monitoring Leaf */
+        /* TODO: implement for hvf */
         if (kvm_enabled() && cpu->enable_pmu) {
             KVMState *s = cs->kvm_state;
 
@@ -3090,6 +3113,7 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         *edx = 0;
         break;
     }
+    printf("OUT eax: %x, ebx: %x, ecx: %x, edx: %x\n", *eax, *ebx, *ecx, *edx);
 }
 
 /* CPUClass::reset() */
@@ -3208,6 +3232,7 @@ static void x86_cpu_reset(CPUState *s)
 
     s->halted = !cpu_is_bsp(cpu);
 
+    /* TODO: implement for hvf */
     if (kvm_enabled()) {
         kvm_arch_reset_vcpu(cpu);
     }
@@ -3250,6 +3275,7 @@ APICCommonClass *apic_get_class(void)
 {
     const char *apic_type = "apic";
 
+    /* TODO: implement for hvf */
     if (kvm_apic_in_kernel()) {
         apic_type = "kvm-apic";
     } else if (xen_enabled()) {
@@ -3480,6 +3506,7 @@ static void x86_cpu_expand_features(X86CPU *cpu, Error **errp)
         }
     }
 
+    /* TODO: implement for hvf */
     if (!kvm_enabled() || !cpu->expose_kvm) {
         env->features[FEAT_KVM] = 0;
     }
@@ -3563,7 +3590,7 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
     Error *local_err = NULL;
     static bool ht_warned;
 
-    if (xcc->kvm_required && !kvm_enabled()) {
+    if (xcc->host_cpuid_required && !accel_uses_host_cpuid()) {
         char *name = x86_cpu_class_get_model_name(xcc);
         error_setg(&local_err, "CPU model '%s' requires KVM", name);
         g_free(name);
@@ -3585,7 +3612,7 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
         x86_cpu_report_filtered_features(cpu);
         if (cpu->enforce_cpuid) {
             error_setg(&local_err,
-                       kvm_enabled() ?
+                       accel_uses_host_cpuid() ?
                            "Host doesn't support requested features" :
                            "TCG doesn't support requested features");
             goto out;
@@ -3608,7 +3635,7 @@ static void x86_cpu_realizefn(DeviceState *dev, Error **errp)
      * consumer AMD devices but nothing else.
      */
     if (env->features[FEAT_8000_0001_EDX] & CPUID_EXT2_LM) {
-        if (kvm_enabled()) {
+        if (accel_uses_host_cpuid()) {
             uint32_t host_phys_bits = x86_host_phys_bits();
             static bool warned;
 
@@ -4196,6 +4223,7 @@ static void x86_cpu_register_types(void)
     type_register_static(&max_x86_cpu_type_info);
     type_register_static(&x86_base_cpu_type_info);
 #ifdef CONFIG_KVM
+#elif CONFIG_HVF
     type_register_static(&host_x86_cpu_type_info);
 #endif
 }

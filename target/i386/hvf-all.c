@@ -749,9 +749,21 @@ int hvf_vcpu_exec(CPUState *cpu)
                                            VMCS_EXIT_INSTRUCTION_LENGTH);
         uint64_t idtvec_info = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_INFO);
         rip = rreg(cpu->hvf_fd, HV_X86_RIP);
+        uint64_t csreg = rreg(cpu->hvf_fd, HV_X86_CS);
         RFLAGS(cpu) = rreg(cpu->hvf_fd, HV_X86_RFLAGS);
         env->eflags = RFLAGS(cpu);
 
+        trace_hvf_vm_exit(exit_reason, exit_qual, rip+(csreg<<4));
+        if (rip==0x95b1) {
+            printf("Aquí\n");
+  //         wvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS,
+  //               cap2ctrl(cpu->hvf_caps->vmx_cap_procbased,
+  //               VMCS_PRI_PROC_BASED_CTLS_HLT |
+  //               VMCS_PRI_PROC_BASED_CTLS_MWAIT |
+  //               VMCS_PRI_PROC_BASED_CTLS_TSC_OFFSET |
+  //               VMCS_PRI_PROC_BASED_CTLS_TPR_SHADOW) |
+  //               VMCS_PRI_PROC_BASED_CTLS_SEC_CONTROL | (1<<27));
+        }
         qemu_mutex_lock_iothread();
 
         update_apic_tpr(cpu);
@@ -759,6 +771,8 @@ int hvf_vcpu_exec(CPUState *cpu)
 
         ret = 0;
         switch (exit_reason) {
+        case VMX_REASON_MTF:
+            break;
         case EXIT_REASON_HLT: {
             macvm_set_rip(cpu, rip + ins_len);
             if (!((cpu->interrupt_request & CPU_INTERRUPT_HARD) &&
@@ -854,7 +868,8 @@ int hvf_vcpu_exec(CPUState *cpu)
             uint32_t rcx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RCX);
             uint32_t rdx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RDX);
 
-            cpu_x86_cpuid(cpu, rax, rcx, &rax, &rbx, &rcx, &rdx);
+            //printf("IN eax: %x, ebx: %x, ecx: %x, edx: %x\n", rax, rbx, rcx, rdx);
+            cpu_x86_cpuid(env, rax, rcx, &rax, &rbx, &rcx, &rdx);
 
             wreg(cpu->hvf_fd, HV_X86_RAX, rax);
             wreg(cpu->hvf_fd, HV_X86_RBX, rbx);
@@ -862,6 +877,10 @@ int hvf_vcpu_exec(CPUState *cpu)
             wreg(cpu->hvf_fd, HV_X86_RDX, rdx);
 
             macvm_set_rip(cpu, rip + ins_len);
+
+            //printf("OUT eax: %x, ebx: %x, ecx: %x, edx: %x\n", rax, rbx, rcx, rdx);
+            //cpu->stopped = true;
+            //return 0;
             break;
         }
         case EXIT_REASON_XSETBV: {
