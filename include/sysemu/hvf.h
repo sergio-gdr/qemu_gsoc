@@ -38,6 +38,13 @@ typedef struct HVFState {
     AccelState parent;
     hvf_slot slots[32];
     int num_slots;
+
+    bool hvf_vcpu_dirty;
+    uint64_t hvf_fd; // fd of vcpu created by HVF
+    // Supporting data structures for VMCS capabilities
+    // and x86 emulation state
+    struct hvf_vcpu_caps *hvf_caps;
+    struct hvf_x86_state *hvf_x86;
 } HVFState;
 
 struct hvf_vcpu_caps {

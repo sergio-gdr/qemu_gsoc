@@ -608,6 +608,7 @@ int hvf_init_vcpu(CPUState *cpu)
 {
 
     X86CPU *x86cpu;
+    KVMState *s;
 
     /* init cpu signals */
     sigset_t set;
@@ -625,49 +626,49 @@ int hvf_init_vcpu(CPUState *cpu)
     init_decoder(cpu);
     init_cpuid(cpu);
 
-    cpu->hvf_caps = (struct hvf_vcpu_caps *)g_malloc0(sizeof(struct hvf_vcpu_caps));
-    cpu->hvf_x86 = (struct hvf_x86_state *)g_malloc0(sizeof(struct hvf_x86_state));
+    s->hvf_caps = (struct hvf_vcpu_caps *)g_malloc0(sizeof(struct hvf_vcpu_caps));
+    s->hvf_x86 = (struct hvf_x86_state *)g_malloc0(sizeof(struct hvf_x86_state));
 
-    r = hv_vcpu_create((hv_vcpuid_t *)&cpu->hvf_fd, HV_VCPU_DEFAULT);
-    cpu->hvf_vcpu_dirty = 1;
+    r = hv_vcpu_create((hv_vcpuid_t *)&s->hvf_fd, HV_VCPU_DEFAULT);
+    s->hvf_vcpu_dirty = 1;
     assert_hvf_ok(r);
 
     if (hv_vmx_read_capability(HV_VMX_CAP_PINBASED,
-        &cpu->hvf_caps->vmx_cap_pinbased)) {
+        &s->hvf_caps->vmx_cap_pinbased)) {
         abort();
     }
     if (hv_vmx_read_capability(HV_VMX_CAP_PROCBASED,
-        &cpu->hvf_caps->vmx_cap_procbased)) {
+        &s->hvf_caps->vmx_cap_procbased)) {
         abort();
     }
     if (hv_vmx_read_capability(HV_VMX_CAP_PROCBASED2,
-        &cpu->hvf_caps->vmx_cap_procbased2)) {
+        &s->hvf_caps->vmx_cap_procbased2)) {
         abort();
     }
     if (hv_vmx_read_capability(HV_VMX_CAP_ENTRY,
-        &cpu->hvf_caps->vmx_cap_entry)) {
+        &s->hvf_caps->vmx_cap_entry)) {
         abort();
     }
 
     /* set VMCS control fields */
-    wvmcs(cpu->hvf_fd, VMCS_PIN_BASED_CTLS,
-          cap2ctrl(cpu->hvf_caps->vmx_cap_pinbased, 0));
-    wvmcs(cpu->hvf_fd, VMCS_PRI_PROC_BASED_CTLS,
-          cap2ctrl(cpu->hvf_caps->vmx_cap_procbased,
+    wvmcs(s->hvf_fd, VMCS_PIN_BASED_CTLS,
+          cap2ctrl(s->hvf_caps->vmx_cap_pinbased, 0));
+    wvmcs(s->hvf_fd, VMCS_PRI_PROC_BASED_CTLS,
+          cap2ctrl(s->hvf_caps->vmx_cap_procbased,
           VMCS_PRI_PROC_BASED_CTLS_HLT |
           VMCS_PRI_PROC_BASED_CTLS_MWAIT |
           VMCS_PRI_PROC_BASED_CTLS_TSC_OFFSET |
           VMCS_PRI_PROC_BASED_CTLS_TPR_SHADOW) |
           VMCS_PRI_PROC_BASED_CTLS_SEC_CONTROL);
-    wvmcs(cpu->hvf_fd, VMCS_SEC_PROC_BASED_CTLS,
-          cap2ctrl(cpu->hvf_caps->vmx_cap_procbased2,
+    wvmcs(s->hvf_fd, VMCS_SEC_PROC_BASED_CTLS,
+          cap2ctrl(s->hvf_caps->vmx_cap_procbased2,
                    VMCS_PRI_PROC_BASED2_CTLS_APIC_ACCESSES));
 
-    wvmcs(cpu->hvf_fd, VMCS_ENTRY_CTLS, cap2ctrl(cpu->hvf_caps->vmx_cap_entry,
+    wvmcs(s->hvf_fd, VMCS_ENTRY_CTLS, cap2ctrl(s->hvf_caps->vmx_cap_entry,
           0));
-    wvmcs(cpu->hvf_fd, VMCS_EXCEPTION_BITMAP, 0); /* Double fault */
+    wvmcs(s->hvf_fd, VMCS_EXCEPTION_BITMAP, 0); /* Double fault */
 
-    wvmcs(cpu->hvf_fd, VMCS_TPR_THRESHOLD, 0);
+    wvmcs(s->hvf_fd, VMCS_TPR_THRESHOLD, 0);
 
     vmx_reset_vcpu(cpu);
 
@@ -675,18 +676,18 @@ int hvf_init_vcpu(CPUState *cpu)
     x86cpu->env.kvm_xsave_buf = qemu_memalign(4096,
                                  sizeof(struct hvf_xsave_buf));
 
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_STAR, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_LSTAR, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_CSTAR, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_FMASK, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_FSBASE, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_GSBASE, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_KERNELGSBASE, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_TSC_AUX, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_STAR, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_LSTAR, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_CSTAR, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_FMASK, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_FSBASE, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_GSBASE, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_KERNELGSBASE, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_TSC_AUX, 1);
     /*hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_IA32_TSC, 1);*/
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_IA32_SYSENTER_CS, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_IA32_SYSENTER_EIP, 1);
-    hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_IA32_SYSENTER_ESP, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_IA32_SYSENTER_CS, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_IA32_SYSENTER_EIP, 1);
+    hv_vcpu_enable_native_msr(s->hvf_fd, MSR_IA32_SYSENTER_ESP, 1);
 
     return 0;
 }

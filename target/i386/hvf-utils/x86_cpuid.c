@@ -277,3 +277,53 @@ void get_cpuid_func(struct CPUState *cpu, int func, int cnt, uint32_t *eax,
         break;
     }
 }
+
+uint32_t hvf_get_supported_cpuid(HVFState *s, uint32_t func, uint32_t idx,
+                                 int reg)
+{
+    const struct hvf_vcpu_caps *caps = s->hvf_caps;
+
+    uint32_t *eax, *ebx, *ecx, *edx;
+    eax = ebx = ecx = edx = NULL;
+
+    switch (reg) {
+    case R_EAX:
+        eax = reg;
+        break;
+    case R_EBX:
+        ebx = reg;
+        break;
+    case R_ECX:
+        ecx = reg;
+        break;
+    case R_EDX:
+        edx = reg;
+        break;
+    }
+    host_cpuid(func, idx, eax, ebx, ecx, edx);
+
+    switch (func) {
+    case 1:
+        *eax = min(*eax, (uint32_t)0xd);
+    case 0x80000001:
+        if (edx) {
+            if (!(caps->vmx_cap_procbased & CPU_BASED_TSC_OFFSET)) {
+                *edx &= ~CPUID_EXT2_RDTSCP;
+            }
+            /* TODO 1GB pages if (caps->vmx_cap_procbased ... */
+        }
+    case 7:
+        if (ebx) {
+            if (!(caps->vmx_cap_exit & (1 << 23)) ||
+                !(caps->vmx_cap_enter & (1 << 16))) {
+                *ebx &= ~(1 << 14);
+            }
+        }
+    case 0xD:
+        if (idx == 1 && eax) {
+            if (!(caps->vmx_cap_procbased2 & CPU_BASED2_XSAVES_XRSTORS)) {
+                *eax &= ~CPUID_XSAVE_XSAVES;
+            }
+        }
+    }
+}
