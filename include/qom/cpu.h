@@ -407,6 +407,9 @@ struct CPUState {
      * unnecessary flushes.
      */
     uint16_t pending_tlb_flush;
+
+    bool hvf_vcpu_dirty;
+    uint64_t hvf_fd; // fd of vcpu created by HVF
 };
 
 QTAILQ_HEAD(CPUTailQ, CPUState);
