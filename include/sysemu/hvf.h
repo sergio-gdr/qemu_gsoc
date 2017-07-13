@@ -39,10 +39,7 @@ typedef struct HVFState {
     hvf_slot slots[32];
     int num_slots;
 
-    // Supporting data structures for VMCS capabilities
-    // and x86 emulation state
     struct hvf_vcpu_caps *hvf_caps;
-    struct hvf_x86_state *hvf_x86;
 } HVFState;
 
 struct hvf_vcpu_caps {

@@ -410,6 +410,7 @@ struct CPUState {
 
     bool hvf_vcpu_dirty;
     uint64_t hvf_fd; // fd of vcpu created by HVF
+    struct hvf_x86_state *hvf_x86;
 };
 
 QTAILQ_HEAD(CPUTailQ, CPUState);

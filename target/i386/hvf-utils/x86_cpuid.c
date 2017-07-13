@@ -20,6 +20,7 @@
  * cpuid
  */
 
+#include "sysemu/hvf.h"
 #include "qemu/osdep.h"
 #include "x86_cpuid.h"
 #include "x86.h"
@@ -98,15 +99,17 @@ static uint64_t xgetbv(uint32_t xcr)
 {
     uint32_t eax, edx;
 
-    __asm__ volatile ("xgetbv" : "=a" (eax), "=d" (edx) : "c" (xcr));
+    __asm__ volatile ("xgetbv"
+                      : "=a" (eax), "=d" (edx) 
+                      : "c" (xcr));
 
     return (((uint64_t)edx) << 32) | eax;
 }
 
-static bool vmx_mpx_supported(void)
+static bool vmx_mpx_supported(HVFState *s)
 {
-    return ((caps->vmx_cap_exit & (1 << 23)) &&
-            (caps->vmx_cap_enter & (1 << 16)));
+    return ((s->hvf_caps->vmx_cap_exit & (1 << 23)) &&
+            (s->hvf_caps->vmx_cap_entry & (1 << 16)));
 }
 
 void init_cpuid(struct CPUState *cpu)
@@ -338,11 +341,10 @@ uint32_t hvf_get_supported_cpuid(HVFState *s, uint32_t func, uint32_t idx,
                     CPUID_7_0_EBX_AVX512BW | CPUID_7_0_EBX_AVX512VL |
                     CPUID_7_0_EBX_INVPCID | CPUID_7_0_EBX_MPX;
 
-            if (!vmx_mpx_supported() && (ebx & CPUID_7_0_EBX_MPX)) {
+            if (!vmx_mpx_supported(s)) {
                 ebx &= ~CPUID_7_0_EBX_MPX;
             }
-            if (!(caps->vmx_cap_procbased2 & CPU_BASED2_INVPCID) &&
-                 (ebx & CPUID_7_0_EBX_INVPCID)) {
+            if (!(caps->vmx_cap_procbased2 & CPU_BASED2_INVPCID)) {
                 ebx &= ~CPUID_7_0_EBX_INVPCID;
             }
 
@@ -357,14 +359,14 @@ uint32_t hvf_get_supported_cpuid(HVFState *s, uint32_t func, uint32_t idx,
         break;
     case 0xD:
         if (idx == 0) {
-            uint64_t host_xcr0 = xgetbv();
-            uint64_t supp_xcr0 = host_xcr0 & XSTATE_FP_MASK | XSTATE_SSE_MASK |
+            uint64_t host_xcr0 = xgetbv(0);
+            uint64_t supp_xcr0 = host_xcr0 & (XSTATE_FP_MASK | XSTATE_SSE_MASK |
                                   XSTATE_YMM_MASK | XSTATE_BNDREGS_MASK |
                                   XSTATE_BNDCSR_MASK | XSTATE_OPMASK_MASK |
-                                  XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK;
+                                  XSTATE_ZMM_Hi256_MASK | XSTATE_Hi16_ZMM_MASK);
             eax &= supp_xcr0;
-            if (!vmx_mpx_supported) {
-                eax &= !(XSTATE_BNDREGS_MASK | XSTATE_BNDCSR_MASK);
+            if (!vmx_mpx_supported(s)) {
+                eax &= ~(XSTATE_BNDREGS_MASK | XSTATE_BNDCSR_MASK);
             }
         } else if (idx == 1) {
             if (!(caps->vmx_cap_procbased2 & CPU_BASED2_XSAVES_XRSTORS)) {
@@ -382,8 +384,7 @@ uint32_t hvf_get_supported_cpuid(HVFState *s, uint32_t func, uint32_t idx,
                 CPUID_PAT | CPUID_PSE36 | CPUID_EXT2_MMXEXT | CPUID_MMX |
                 CPUID_FXSR | CPUID_EXT2_FXSR | CPUID_EXT2_PDPE1GB | CPUID_EXT2_3DNOWEXT |
                 CPUID_EXT2_3DNOW | CPUID_EXT2_LM | CPUID_EXT2_RDTSCP;
-        if (!(caps->vmx_cap_procbased & CPU_BASED_TSC_OFFSET) && 
-             (edx & CPUID_EXT2_RDTSCP)) {
+        if (!(caps->vmx_cap_procbased & CPU_BASED_TSC_OFFSET)) {
             edx &= ~CPUID_EXT2_RDTSCP;
         }
         ecx &= CPUID_EXT3_LAHF_LM | CPUID_EXT3_CMP_LEG | CPUID_EXT3_CR8LEG |
