@@ -1643,7 +1643,7 @@ static void max_x86_cpu_initfn(Object *obj)
     cpu->max_features = true;
 
     /* TODO: implement for hvf */
-    if (kvm_enabled()) {
+    if (kvm_enabled() || hvf_enabled()) {
         X86CPUDefinition host_cpudef = { };
         uint32_t eax = 0, ebx = 0, ecx = 0, edx = 0;
 
@@ -1659,12 +1659,21 @@ static void max_x86_cpu_initfn(Object *obj)
 
         x86_cpu_load_def(cpu, &host_cpudef, &error_abort);
 
-        env->cpuid_min_level =
-            kvm_arch_get_supported_cpuid(s, 0x0, 0, R_EAX);
-        env->cpuid_min_xlevel =
-            kvm_arch_get_supported_cpuid(s, 0x80000000, 0, R_EAX);
-        env->cpuid_min_xlevel2 =
-            kvm_arch_get_supported_cpuid(s, 0xC0000000, 0, R_EAX);
+        if (kvm_enabled()) {
+            env->cpuid_min_level =
+                kvm_arch_get_supported_cpuid(s, 0x0, 0, R_EAX);
+            env->cpuid_min_xlevel =
+                kvm_arch_get_supported_cpuid(s, 0x80000000, 0, R_EAX);
+            env->cpuid_min_xlevel2 =
+                kvm_arch_get_supported_cpuid(s, 0xC0000000, 0, R_EAX);
+        } else {
+            env->cpuid_min_level =
+                hvf_get_supported_cpuid(0x0, 0, R_EAX);
+            env->cpuid_min_xlevel =
+                hvf_get_supported_cpuid(0x80000000, 0, R_EAX);
+            env->cpuid_min_xlevel2 =
+                hvf_get_supported_cpuid(0xC0000000, 0, R_EAX);
+        }
 
         if (lmce_supported()) {
             object_property_set_bool(OBJECT(cpu), true, "lmce", &error_abort);
@@ -2339,11 +2348,14 @@ static uint32_t x86_cpu_get_supported_feature_word(FeatureWord w,
     FeatureWordInfo *wi = &feature_word_info[w];
     uint32_t r;
 
-    /* TODO: implement for hvf */
     if (kvm_enabled()) {
         r = kvm_arch_get_supported_cpuid(kvm_state, wi->cpuid_eax,
                                                     wi->cpuid_ecx,
                                                     wi->cpuid_reg);
+    } else if (hvf_enabled()) {
+        r = hvf_get_supported_cpuid(wi->cpuid_eax,
+                                    wi->cpuid_ecx,
+                                    wi->cpuid_reg);
     } else if (tcg_enabled()) {
         r = wi->tcg_features;
     } else {
@@ -2702,8 +2714,6 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
     uint32_t limit;
     uint32_t signature[3];
 
-    printf("IN eax: 0x%x\n", index);
-
     /* Calculate & apply limits for different index ranges */
     if (index >= 0xC0000000) {
         limit = env->cpuid_xlevel2;
@@ -2875,7 +2885,6 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         break;
     case 0xA:
         /* Architectural Performance Monitoring Leaf */
-        /* TODO: implement for hvf */
         if (kvm_enabled() && cpu->enable_pmu) {
             KVMState *s = cs->kvm_state;
 
@@ -2883,6 +2892,11 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
             *ebx = kvm_arch_get_supported_cpuid(s, 0xA, count, R_EBX);
             *ecx = kvm_arch_get_supported_cpuid(s, 0xA, count, R_ECX);
             *edx = kvm_arch_get_supported_cpuid(s, 0xA, count, R_EDX);
+        } else if (hvf_enabled() && cpu->enable_pmu) {
+            *eax = hvf_get_supported_cpuid(0xA, count, R_EAX);
+            *ebx = hvf_get_supported_cpuid(0xA, count, R_EBX);
+            *ecx = hvf_get_supported_cpuid(0xA, count, R_ECX);
+            *edx = hvf_get_supported_cpuid(0xA, count, R_EDX);
         } else {
             *eax = 0;
             *ebx = 0;
@@ -3113,7 +3127,6 @@ void cpu_x86_cpuid(CPUX86State *env, uint32_t index, uint32_t count,
         *edx = 0;
         break;
     }
-    printf("OUT eax: %x, ebx: %x, ecx: %x, edx: %x\n", *eax, *ebx, *ecx, *edx);
 }
 
 /* CPUClass::reset() */
