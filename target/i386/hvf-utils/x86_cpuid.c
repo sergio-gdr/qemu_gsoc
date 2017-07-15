@@ -375,11 +375,10 @@ uint32_t hvf_get_supported_cpuid(uint32_t func, uint32_t idx,
             }
         } else if (idx == 1) {
             hv_vmx_read_capability(HV_VMX_CAP_PROCBASED2, &cap);
+            eax &= CPUID_XSAVE_XSAVEOPT | CPUID_XSAVE_XGETBV1;
             if (!(cap & CPU_BASED2_XSAVES_XRSTORS)) {
                 eax &= ~CPUID_XSAVE_XSAVES;
             }
-            /* not supported */
-            eax &= ~(CPUID_XSAVE_XSAVEOPT | CPUID_XSAVE_XGETBV1);
         }
         break;
     case 0x80000001:
@@ -389,7 +388,7 @@ uint32_t hvf_get_supported_cpuid(uint32_t func, uint32_t idx,
                 CPUID_EXT2_SYSCALL | CPUID_MTRR | CPUID_PGE | CPUID_MCA | CPUID_CMOV |
                 CPUID_PAT | CPUID_PSE36 | CPUID_EXT2_MMXEXT | CPUID_MMX |
                 CPUID_FXSR | CPUID_EXT2_FXSR | CPUID_EXT2_PDPE1GB | CPUID_EXT2_3DNOWEXT |
-                CPUID_EXT2_3DNOW | CPUID_EXT2_LM | CPUID_EXT2_RDTSCP;
+                CPUID_EXT2_3DNOW | CPUID_EXT2_LM | CPUID_EXT2_RDTSCP | CPUID_EXT2_NX;
         hv_vmx_read_capability(HV_VMX_CAP_PROCBASED, &cap);
         if (!(cap & CPU_BASED_TSC_OFFSET)) {
             edx &= ~CPUID_EXT2_RDTSCP;
