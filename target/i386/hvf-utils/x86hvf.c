@@ -26,7 +26,6 @@
 #include "cpu.h"
 #include "x86_descr.h"
 #include "x86_decode.h"
-#include "xsave_helper.h"
 
 #include "hw/i386/apic_internal.h"
 
