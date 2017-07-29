@@ -492,6 +492,54 @@ static bool ept_emulation_fault(uint64_t ept_qual)
     return true;
 }
 
+static void hvf_log_start(MemoryListener *listener,
+                          MemoryRegionSection *section, int old, int new)
+{
+    struct mac_slot *macslot;
+    hvf_slot *slot;
+
+    if (old != 0)
+        return;
+
+    slot = hvf_find_overlap_slot(
+            section->offset_within_address_space,
+            section->offset_within_address_space + int128_get64(section->size));
+    macslot = &mac_slots[slot->slot_id];
+
+    /* protect region against writes; begin tracking it */
+    hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
+                  HV_MEMORY_READ);
+}
+
+static void hvf_log_stop(MemoryListener *listener,
+                         MemoryRegionSection *section, int old, int new)
+{
+    struct mac_slot *macslot;
+    hvf_slot *slot;
+
+    if (new != 0)
+        return;
+
+    slot = hvf_find_overlap_slot(
+            section->offset_within_address_space,
+            section->offset_within_address_space + int128_get64(section->size));
+    macslot = &mac_slots[slot->slot_id];
+
+    /* stop tracking region*/
+    hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
+                  HV_MEMORY_READ | HV_MEMORY_WRITE);
+}
+
+static void hvf_log_sync(MemoryListener *listener,
+                         MemoryRegionSection *section)
+{
+    /* 
+     * sync of dirty pages is handled elsewhere; just make sure we keep
+     * tracking the region.
+     * */
+    hvf_log_start(listener, section, 0, 0);
+}
+
 static void hvf_region_add(MemoryListener *listener,
                            MemoryRegionSection *section)
 {
@@ -508,6 +556,9 @@ static MemoryListener hvf_memory_listener = {
     .priority = 10,
     .region_add = hvf_region_add,
     .region_del = hvf_region_del,
+    .log_start = hvf_log_start,
+    .log_stop = hvf_log_stop,
+    .log_sync = hvf_log_sync,
 };
 
 void vmx_reset_vcpu(CPUState *cpu) {
@@ -661,7 +712,7 @@ int hvf_init_vcpu(CPUState *cpu)
           VMCS_PRI_PROC_BASED_CTLS_SEC_CONTROL);
     wvmcs(cpu->hvf_fd, VMCS_SEC_PROC_BASED_CTLS,
           cap2ctrl(hvf_state->hvf_caps->vmx_cap_procbased2,
-                   VMCS_PRI_PROC_BASED2_CTLS_APIC_ACCESSES));
+                   VMCS_PRI_PROC_BASED2_CTLS_APIC_ACCESSES | (1<<2)));
 
     wvmcs(cpu->hvf_fd, VMCS_ENTRY_CTLS, cap2ctrl(hvf_state->hvf_caps->vmx_cap_entry,
           0));
@@ -688,6 +739,8 @@ int hvf_init_vcpu(CPUState *cpu)
     hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_IA32_SYSENTER_EIP, 1);
     hv_vcpu_enable_native_msr(cpu->hvf_fd, MSR_IA32_SYSENTER_ESP, 1);
 
+    uint64_t temp;
+    hv_vmx_vcpu_read_vmcs(cpu->hvf_fd, VMCS_CTRL_CPU_BASED2, &temp);
     return 0;
 }
 
