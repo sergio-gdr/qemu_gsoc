@@ -463,7 +463,7 @@ void hvf_cpu_synchronize_post_init(CPUState *cpu_state)
 }
 
 /* TODO: ept fault handlig */
-static bool ept_emulation_fault(uint64_t ept_qual)
+static bool ept_emulation_fault(CPUState *cpu, hvf_slot *slot, uint64_t ept_qual)
 {
     int read, write;
 
@@ -479,6 +479,15 @@ static bool ept_emulation_fault(uint64_t ept_qual)
         return false;
     }
 
+    if (write && slot) {
+        if (slot->flags & HVF_SLOT_LOG) {
+            ram_addr_t off;
+            MemoryRegion *reg = memory_region_from_host(slot->mem + slot->start,
+                                                        &off);
+            memory_region_set_dirty(reg, off);
+        }
+    }
+
     /*
      * The EPT violation must have been caused by accessing a
      * guest-physical address that is a translation of a guest-linear
@@ -492,14 +501,10 @@ static bool ept_emulation_fault(uint64_t ept_qual)
     return true;
 }
 
-static void hvf_log_start(MemoryListener *listener,
-                          MemoryRegionSection *section, int old, int new)
+static void hvf_set_dirty_tracking(MemoryRegionSection *section, bool on)
 {
     struct mac_slot *macslot;
     hvf_slot *slot;
-
-    if (old != 0)
-        return;
 
     slot = hvf_find_overlap_slot(
             section->offset_within_address_space,
@@ -507,27 +512,34 @@ static void hvf_log_start(MemoryListener *listener,
     macslot = &mac_slots[slot->slot_id];
 
     /* protect region against writes; begin tracking it */
-    hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
-                  HV_MEMORY_READ);
+    if (on) {
+        slot->flags |= HVF_SLOT_LOG;
+        hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
+                      HV_MEMORY_READ);
+    /* stop tracking region*/
+    } else {
+        slot->flags &= ~HVF_SLOT_LOG;
+        hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
+                      HV_MEMORY_READ | HV_MEMORY_WRITE);
+    }
+}
+
+static void hvf_log_start(MemoryListener *listener,
+                          MemoryRegionSection *section, int old, int new)
+{
+    if (old != 0)
+        return;
+
+    hvf_set_dirty_tracking(section, 1);
 }
 
 static void hvf_log_stop(MemoryListener *listener,
                          MemoryRegionSection *section, int old, int new)
 {
-    struct mac_slot *macslot;
-    hvf_slot *slot;
-
     if (new != 0)
         return;
 
-    slot = hvf_find_overlap_slot(
-            section->offset_within_address_space,
-            section->offset_within_address_space + int128_get64(section->size));
-    macslot = &mac_slots[slot->slot_id];
-
-    /* stop tracking region*/
-    hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
-                  HV_MEMORY_READ | HV_MEMORY_WRITE);
+    hvf_set_dirty_tracking(section, 0);
 }
 
 static void hvf_log_sync(MemoryListener *listener,
@@ -537,7 +549,7 @@ static void hvf_log_sync(MemoryListener *listener,
      * sync of dirty pages is handled elsewhere; just make sure we keep
      * tracking the region.
      * */
-    hvf_log_start(listener, section, 0, 0);
+    hvf_set_dirty_tracking(section, 1);
 }
 
 static void hvf_region_add(MemoryListener *listener,
@@ -842,7 +854,7 @@ int hvf_vcpu_exec(CPUState *cpu)
 
             slot = hvf_find_overlap_slot(gpa, gpa);
             /* mmio */
-            if (ept_emulation_fault(exit_qual) && !slot) {
+            if (ept_emulation_fault(cpu, slot, exit_qual) && !slot) {
                 struct x86_decode decode;
 
                 load_regs(cpu);
