@@ -172,6 +172,7 @@ void hvf_set_phys_mem(MemoryRegionSection *section, bool add)
     mem->size = int128_get64(section->size);
     mem->mem = memory_region_get_ram_ptr(area) + section->offset_within_region;
     mem->start = section->offset_within_address_space;
+    mem->region = area;
 
     if (do_hvf_set_memory(mem)) {
         fprintf(stderr, "Error registering new memory slot\n");
@@ -463,7 +464,7 @@ void hvf_cpu_synchronize_post_init(CPUState *cpu_state)
 }
 
 /* TODO: ept fault handlig */
-static bool ept_emulation_fault(CPUState *cpu, hvf_slot *slot, uint64_t ept_qual)
+static bool ept_emulation_fault(hvf_slot *slot, addr_t gpa, uint64_t ept_qual)
 {
     int read, write;
 
@@ -481,10 +482,9 @@ static bool ept_emulation_fault(CPUState *cpu, hvf_slot *slot, uint64_t ept_qual
 
     if (write && slot) {
         if (slot->flags & HVF_SLOT_LOG) {
-            ram_addr_t off;
-            MemoryRegion *reg = memory_region_from_host(slot->mem + slot->start,
-                                                        &off);
-            memory_region_set_dirty(reg, off);
+            memory_region_set_dirty(slot->region, gpa - slot->start, 1);
+            hv_vm_protect((hv_gpaddr_t)slot->start, (size_t)slot->size,
+                          HV_MEMORY_READ | HV_MEMORY_WRITE);
         }
     }
 
@@ -509,17 +509,16 @@ static void hvf_set_dirty_tracking(MemoryRegionSection *section, bool on)
     slot = hvf_find_overlap_slot(
             section->offset_within_address_space,
             section->offset_within_address_space + int128_get64(section->size));
-    macslot = &mac_slots[slot->slot_id];
 
     /* protect region against writes; begin tracking it */
     if (on) {
         slot->flags |= HVF_SLOT_LOG;
-        hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
+        hv_vm_protect((hv_gpaddr_t)slot->start, (size_t)slot->size,
                       HV_MEMORY_READ);
     /* stop tracking region*/
     } else {
         slot->flags &= ~HVF_SLOT_LOG;
-        hv_vm_protect((hv_gpaddr_t)macslot->gpa_start, (size_t)macslot->size,
+        hv_vm_protect((hv_gpaddr_t)slot->start, (size_t)slot->size,
                       HV_MEMORY_READ | HV_MEMORY_WRITE);
     }
 }
@@ -548,7 +547,7 @@ static void hvf_log_sync(MemoryListener *listener,
     /* 
      * sync of dirty pages is handled elsewhere; just make sure we keep
      * tracking the region.
-     * */
+     */
     hvf_set_dirty_tracking(section, 1);
 }
 
@@ -724,7 +723,7 @@ int hvf_init_vcpu(CPUState *cpu)
           VMCS_PRI_PROC_BASED_CTLS_SEC_CONTROL);
     wvmcs(cpu->hvf_fd, VMCS_SEC_PROC_BASED_CTLS,
           cap2ctrl(hvf_state->hvf_caps->vmx_cap_procbased2,
-                   VMCS_PRI_PROC_BASED2_CTLS_APIC_ACCESSES | (1<<2)));
+                   VMCS_PRI_PROC_BASED2_CTLS_APIC_ACCESSES));
 
     wvmcs(cpu->hvf_fd, VMCS_ENTRY_CTLS, cap2ctrl(hvf_state->hvf_caps->vmx_cap_entry,
           0));
@@ -814,7 +813,6 @@ int hvf_vcpu_exec(CPUState *cpu)
                                            VMCS_EXIT_INSTRUCTION_LENGTH);
         uint64_t idtvec_info = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_INFO);
         rip = rreg(cpu->hvf_fd, HV_X86_RIP);
-        uint64_t csreg = rreg(cpu->hvf_fd, HV_X86_CS);
         RFLAGS(cpu) = rreg(cpu->hvf_fd, HV_X86_RFLAGS);
         env->eflags = RFLAGS(cpu);
 
@@ -854,7 +852,7 @@ int hvf_vcpu_exec(CPUState *cpu)
 
             slot = hvf_find_overlap_slot(gpa, gpa);
             /* mmio */
-            if (ept_emulation_fault(cpu, slot, exit_qual) && !slot) {
+            if (ept_emulation_fault(slot, gpa, exit_qual) && !slot) {
                 struct x86_decode decode;
 
                 load_regs(cpu);
