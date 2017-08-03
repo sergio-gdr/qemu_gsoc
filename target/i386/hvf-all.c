@@ -811,7 +811,26 @@ int hvf_vcpu_exec(CPUState *cpu)
         uint64_t exit_qual = rvmcs(cpu->hvf_fd, VMCS_EXIT_QUALIFICATION);
         uint32_t ins_len = (uint32_t)rvmcs(cpu->hvf_fd,
                                            VMCS_EXIT_INSTRUCTION_LENGTH);
+
         uint64_t idtvec_info = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_INFO);
+        if (idtvec_info & VMCS_IDT_VEC_VALID) {
+            env->exception_injected = -1;
+            env->interrupt_injected = -1;
+
+            switch (idtvec_info & VMCS_IDT_VEC_TYPE) {
+            case VMCS_IDT_VEC_HWINTR:
+            case VMCS_IDT_VEC_SWINTR:
+                env->interrupt_injected = idtvec_info & VMCS_IDT_VEC_VECNUM;
+                break;
+            case VMCS_IDT_VEC_NMI:
+            case VMCS_IDT_VEC_HWEXCEPTION:
+            case VMCS_IDT_VEC_PRIV_SWEXCEPTION:
+            case VMCS_IDT_VEC_SWEXCEPTION:
+                env->exception_injected = idtvec_info & VMCS_IDT_VEC_VECNUM;
+                break;
+            }
+        }
+
         rip = rreg(cpu->hvf_fd, HV_X86_RIP);
         RFLAGS(cpu) = rreg(cpu->hvf_fd, HV_X86_RFLAGS);
         env->eflags = RFLAGS(cpu);
@@ -1045,6 +1064,7 @@ int hvf_vcpu_exec(CPUState *cpu)
             break;
         case VMX_REASON_VMCALL:
             /* TODO: inject #GP fault */
+
             break;
         default:
             fprintf(stderr, "%llx: unhandled exit %llx\n", rip, exit_reason);
