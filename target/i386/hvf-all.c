@@ -463,7 +463,6 @@ void hvf_cpu_synchronize_post_init(CPUState *cpu_state)
     run_on_cpu(cpu_state, _hvf_cpu_synchronize_post_init, RUN_ON_CPU_NULL);
 }
 
-/* TODO: ept fault handlig */
 static bool ept_emulation_fault(hvf_slot *slot, addr_t gpa, uint64_t ept_qual)
 {
     int read, write;
@@ -498,7 +497,7 @@ static bool ept_emulation_fault(hvf_slot *slot, addr_t gpa, uint64_t ept_qual)
         return false;
     }
 
-    return true;
+    return !slot;
 }
 
 static void hvf_set_dirty_tracking(MemoryRegionSection *section, bool on)
@@ -871,7 +870,7 @@ int hvf_vcpu_exec(CPUState *cpu)
 
             slot = hvf_find_overlap_slot(gpa, gpa);
             /* mmio */
-            if (ept_emulation_fault(slot, gpa, exit_qual) && !slot) {
+            if (ept_emulation_fault(slot, gpa, exit_qual)) {
                 struct x86_decode decode;
 
                 load_regs(cpu);
@@ -882,9 +881,6 @@ int hvf_vcpu_exec(CPUState *cpu)
                 store_regs(cpu);
                 break;
             }
-#ifdef DIRTY_VGA_TRACKING
-            /* TODO: handle dirty page tracking */
-#endif
             break;
         }
         case EXIT_REASON_INOUT:
