@@ -229,17 +229,20 @@ void update_apic_tpr(CPUState *cpu)
 /* TODO: taskswitch handling */
 static void save_state_to_tss32(CPUState *cpu, struct x86_tss_segment32 *tss)
 {
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
+
     /* CR3 and ldt selector are not saved intentionally */
-    tss->eip = EIP(cpu);
-    tss->eflags = EFLAGS(cpu);
-    tss->eax = EAX(cpu);
-    tss->ecx = ECX(cpu);
-    tss->edx = EDX(cpu);
-    tss->ebx = EBX(cpu);
-    tss->esp = ESP(cpu);
-    tss->ebp = EBP(cpu);
-    tss->esi = ESI(cpu);
-    tss->edi = EDI(cpu);
+    tss->eip = EIP(env);
+    tss->eflags = EFLAGS(env);
+    tss->eax = EAX(env);
+    tss->ecx = ECX(env);
+    tss->edx = EDX(env);
+    tss->ebx = EBX(env);
+    tss->esp = ESP(env);
+    tss->ebp = EBP(env);
+    tss->esi = ESI(env);
+    tss->edi = EDI(env);
 
     tss->es = vmx_read_segment_selector(cpu, REG_SEG_ES).sel;
     tss->cs = vmx_read_segment_selector(cpu, REG_SEG_CS).sel;
@@ -251,20 +254,23 @@ static void save_state_to_tss32(CPUState *cpu, struct x86_tss_segment32 *tss)
 
 static void load_state_from_tss32(CPUState *cpu, struct x86_tss_segment32 *tss)
 {
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
+
     wvmcs(cpu->hvf_fd, VMCS_GUEST_CR3, tss->cr3);
 
-    RIP(cpu) = tss->eip;
-    EFLAGS(cpu) = tss->eflags | 2;
+    RIP(env) = tss->eip;
+    EFLAGS(env) = tss->eflags | 2;
 
     /* General purpose registers */
-    RAX(cpu) = tss->eax;
-    RCX(cpu) = tss->ecx;
-    RDX(cpu) = tss->edx;
-    RBX(cpu) = tss->ebx;
-    RSP(cpu) = tss->esp;
-    RBP(cpu) = tss->ebp;
-    RSI(cpu) = tss->esi;
-    RDI(cpu) = tss->edi;
+    RAX(env) = tss->eax;
+    RCX(env) = tss->ecx;
+    RDX(env) = tss->edx;
+    RBX(env) = tss->ebx;
+    RSP(env) = tss->esp;
+    RBP(env) = tss->ebp;
+    RSI(env) = tss->esi;
+    RDI(env) = tss->edi;
 
     vmx_write_segment_selector(cpu, (x68_segment_selector){{tss->ldt}},
                                REG_SEG_LDTR);
@@ -340,6 +346,8 @@ static void vmx_handle_task_switch(CPUState *cpu, x68_segment_selector tss_sel,
     uint32_t desc_limit;
     struct x86_call_gate task_gate_desc;
     struct vmx_segment vmx_seg;
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
 
     x86_read_segment_descriptor(cpu, &next_tss_desc, tss_sel);
     x86_read_segment_descriptor(cpu, &curr_tss_desc, old_tss_sel);
@@ -368,7 +376,7 @@ static void vmx_handle_task_switch(CPUState *cpu, x68_segment_selector tss_sel,
     }
 
     if (reason == TSR_IRET) {
-        EFLAGS(cpu) &= ~RFLAGS_NT;
+        EFLAGS(env) &= ~RFLAGS_NT;
     }
 
     if (reason != TSR_CALL && reason != TSR_IDT_GATE) {
@@ -668,7 +676,8 @@ static void dummy_signal(int sig)
 int hvf_init_vcpu(CPUState *cpu)
 {
 
-    X86CPU *x86cpu;
+    X86CPU *x86cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86cpu->env;
 
     /* init cpu signals */
     sigset_t set;
@@ -687,7 +696,7 @@ int hvf_init_vcpu(CPUState *cpu)
     init_cpuid(cpu);
 
     hvf_state->hvf_caps = (struct hvf_vcpu_caps *)g_malloc0(sizeof(struct hvf_vcpu_caps));
-    cpu->hvf_x86 = (struct hvf_x86_state *)g_malloc0(sizeof(struct hvf_x86_state));
+    env->hvf_emul = (struct hvf_x86_state *)g_malloc0(sizeof(struct hvf_x86_state));
 
     r = hv_vcpu_create((hv_vcpuid_t *)&cpu->hvf_fd, HV_VCPU_DEFAULT);
     cpu->hvf_vcpu_dirty = 1;
@@ -786,10 +795,13 @@ int hvf_vcpu_exec(CPUState *cpu)
             cpu->hvf_vcpu_dirty = false;
         }
 
-        cpu->hvf_x86->interruptable =
-            !(rvmcs(cpu->hvf_fd, VMCS_GUEST_INTERRUPTIBILITY) &
+        if (rvmcs(cpu->hvf_fd, VMCS_GUEST_INTERRUPTIBILITY) &
              (VMCS_INTERRUPTIBILITY_STI_BLOCKING |
-             VMCS_INTERRUPTIBILITY_MOVSS_BLOCKING));
+             VMCS_INTERRUPTIBILITY_MOVSS_BLOCKING)) {
+            env->hflags &= ~HF_INHIBIT_IRQ_MASK;
+        } else {
+            env->hflags |= HF_INHIBIT_IRQ_MASK;
+        }
 
         hvf_inject_interrupts(cpu);
         vmx_update_tpr(cpu);
@@ -815,8 +827,10 @@ int hvf_vcpu_exec(CPUState *cpu)
         if (idtvec_info & VMCS_IDT_VEC_VALID) {
             env->exception_injected = -1;
             env->interrupt_injected = -1;
+            env->idt_vec_valid = true;
+            env->idt_vec_type = idtvec_info & VMCS_IDT_VEC_TYPE;
 
-            switch (idtvec_info & VMCS_IDT_VEC_TYPE) {
+            switch (env->idt_vec_type) {
             case VMCS_IDT_VEC_HWINTR:
             case VMCS_IDT_VEC_SWINTR:
                 env->interrupt_injected = idtvec_info & VMCS_IDT_VEC_VECNUM;
@@ -831,8 +845,8 @@ int hvf_vcpu_exec(CPUState *cpu)
         }
 
         rip = rreg(cpu->hvf_fd, HV_X86_RIP);
-        RFLAGS(cpu) = rreg(cpu->hvf_fd, HV_X86_RFLAGS);
-        env->eflags = RFLAGS(cpu);
+        RFLAGS(env) = rreg(cpu->hvf_fd, HV_X86_RFLAGS);
+        env->eflags = RFLAGS(env);
 
         qemu_mutex_lock_iothread();
 
@@ -844,7 +858,7 @@ int hvf_vcpu_exec(CPUState *cpu)
         case EXIT_REASON_HLT: {
             macvm_set_rip(cpu, rip + ins_len);
             if (!((cpu->interrupt_request & CPU_INTERRUPT_HARD) &&
-                (EFLAGS(cpu) & IF_MASK))
+                (EFLAGS(env) & IF_MASK))
                 && !(cpu->interrupt_request & CPU_INTERRUPT_NMI) &&
                 !(idtvec_info & VMCS_IDT_VEC_VALID)) {
                 cpu->halted = 1;
@@ -874,7 +888,7 @@ int hvf_vcpu_exec(CPUState *cpu)
                 struct x86_decode decode;
 
                 load_regs(cpu);
-                cpu->hvf_x86->fetch_rip = rip;
+                env->hvf_emul->fetch_rip = rip;
 
                 decode_instruction(cpu, &decode);
                 exec_instruction(cpu, &decode);
@@ -897,20 +911,20 @@ int hvf_vcpu_exec(CPUState *cpu)
                 load_regs(cpu);
                 hvf_handle_io(env, port, &val, 0, size, 1);
                 if (size == 1) {
-                    AL(cpu) = val;
+                    AL(env) = val;
                 } else if (size == 2) {
-                    AX(cpu) = val;
+                    AX(env) = val;
                 } else if (size == 4) {
-                    RAX(cpu) = (uint32_t)val;
+                    RAX(env) = (uint32_t)val;
                 } else {
                     VM_PANIC("size");
                 }
-                RIP(cpu) += ins_len;
+                RIP(env) += ins_len;
                 store_regs(cpu);
                 break;
             } else if (!string && !in) {
-                RAX(cpu) = rreg(cpu->hvf_fd, HV_X86_RAX);
-                hvf_handle_io(env, port, &RAX(cpu), 1, size, 1);
+                RAX(env) = rreg(cpu->hvf_fd, HV_X86_RAX);
+                hvf_handle_io(env, port, &RAX(env), 1, size, 1);
                 macvm_set_rip(cpu, rip + ins_len);
                 break;
             }
@@ -918,7 +932,7 @@ int hvf_vcpu_exec(CPUState *cpu)
             struct x86_decode decode;
 
             load_regs(cpu);
-            cpu->hvf_x86->fetch_rip = rip;
+            env->hvf_emul->fetch_rip = rip;
 
             decode_instruction(cpu, &decode);
             VM_PANIC_ON(ins_len != decode.len);
@@ -985,7 +999,7 @@ int hvf_vcpu_exec(CPUState *cpu)
             } else {
                 simulate_wrmsr(cpu);
             }
-            RIP(cpu) += rvmcs(cpu->hvf_fd, VMCS_EXIT_INSTRUCTION_LENGTH);
+            RIP(env) += rvmcs(cpu->hvf_fd, VMCS_EXIT_INSTRUCTION_LENGTH);
             store_regs(cpu);
             break;
         }
@@ -999,19 +1013,19 @@ int hvf_vcpu_exec(CPUState *cpu)
 
             switch (cr) {
             case 0x0: {
-                macvm_set_cr0(cpu->hvf_fd, RRX(cpu, reg));
+                macvm_set_cr0(cpu->hvf_fd, RRX(env, reg));
                 break;
             }
             case 4: {
-                macvm_set_cr4(cpu->hvf_fd, RRX(cpu, reg));
+                macvm_set_cr4(cpu->hvf_fd, RRX(env, reg));
                 break;
             }
             case 8: {
                 X86CPU *x86_cpu = X86_CPU(cpu);
                 if (exit_qual & 0x10) {
-                    RRX(cpu, reg) = cpu_get_apic_tpr(x86_cpu->apic_state);
+                    RRX(env, reg) = cpu_get_apic_tpr(x86_cpu->apic_state);
                 } else {
-                    int tpr = RRX(cpu, reg);
+                    int tpr = RRX(env, reg);
                     cpu_set_apic_tpr(x86_cpu->apic_state, tpr);
                     ret = EXCP_INTERRUPT;
                 }
@@ -1021,7 +1035,7 @@ int hvf_vcpu_exec(CPUState *cpu)
                 fprintf(stderr, "Unrecognized CR %d\n", cr);
                 abort();
             }
-            RIP(cpu) += ins_len;
+            RIP(env) += ins_len;
             store_regs(cpu);
             break;
         }
@@ -1029,7 +1043,7 @@ int hvf_vcpu_exec(CPUState *cpu)
             struct x86_decode decode;
 
             load_regs(cpu);
-            cpu->hvf_x86->fetch_rip = rip;
+            env->hvf_emul->fetch_rip = rip;
 
             decode_instruction(cpu, &decode);
             exec_instruction(cpu, &decode);

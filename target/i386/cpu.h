@@ -23,6 +23,7 @@
 #include "qemu-common.h"
 #include "cpu-qom.h"
 #include "standard-headers/asm-x86/hyperv.h"
+#include "target/i386/hvf-utils/x86.h"
 
 #ifdef TARGET_X86_64
 #define TARGET_LONG_BITS 64
@@ -1138,6 +1139,8 @@ typedef struct CPUX86State {
         struct CPUWatchpoint *cpu_watchpoint[4];
     }; /* break/watchpoints for dr[0..3] */
     int old_exception;  /* exception in flight */
+    int idt_vec_type;
+    bool idt_vec_valid; /* vmexit during event delivery */
 
     uint64_t vm_vmcb;
     uint64_t tsc_offset;
@@ -1192,6 +1195,7 @@ typedef struct CPUX86State {
     int64_t tsc_khz;
     int64_t user_tsc_khz; /* for sanity check only */
     void *kvm_xsave_buf;
+    struct hvf_x86_state *hvf_emul;
 
     uint64_t mcg_cap;
     uint64_t mcg_ctl;
