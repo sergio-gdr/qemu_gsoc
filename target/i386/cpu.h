@@ -1139,8 +1139,6 @@ typedef struct CPUX86State {
         struct CPUWatchpoint *cpu_watchpoint[4];
     }; /* break/watchpoints for dr[0..3] */
     int old_exception;  /* exception in flight */
-    int idt_vec_type;
-    bool idt_vec_valid; /* vmexit during event delivery */
 
     uint64_t vm_vmcb;
     uint64_t tsc_offset;
@@ -1190,6 +1188,7 @@ typedef struct CPUX86State {
     int32_t interrupt_injected;
     uint8_t soft_interrupt;
     uint8_t has_error_code;
+    uint32_t ins_len;
     uint32_t sipi_vector;
     bool tsc_valid;
     int64_t tsc_khz;

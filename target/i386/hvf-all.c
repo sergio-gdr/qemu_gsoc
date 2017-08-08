@@ -827,20 +827,30 @@ int hvf_vcpu_exec(CPUState *cpu)
         if (idtvec_info & VMCS_IDT_VEC_VALID) {
             env->exception_injected = -1;
             env->interrupt_injected = -1;
-            env->idt_vec_valid = true;
-            env->idt_vec_type = idtvec_info & VMCS_IDT_VEC_TYPE;
-
-            switch (env->idt_vec_type) {
+            env->nmi_injected = false;
+            switch (idtvec_info & 0xff) {
             case VMCS_IDT_VEC_HWINTR:
             case VMCS_IDT_VEC_SWINTR:
                 env->interrupt_injected = idtvec_info & VMCS_IDT_VEC_VECNUM;
                 break;
             case VMCS_IDT_VEC_NMI:
+                env->nmi_injected = true;
+                break;
             case VMCS_IDT_VEC_HWEXCEPTION:
-            case VMCS_IDT_VEC_PRIV_SWEXCEPTION:
             case VMCS_IDT_VEC_SWEXCEPTION:
                 env->exception_injected = idtvec_info & VMCS_IDT_VEC_VECNUM;
                 break;
+            case VMCS_IDT_VEC_PRIV_SWEXCEPTION:
+            default:
+                abort();
+            }
+            if ((idtvec_info & 0xff) == VMCS_IDT_VEC_SWEXCEPTION ||
+                (idtvec_info & 0xff) == VMCS_IDT_VEC_SWINTR) {
+                env->ins_len = ins_len;
+            }
+            if (idtvec_info & VMCS_INTR_DEL_ERRCODE) {
+                env->has_error_code = true;
+                env->error_code = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_ERROR);
             }
         }
 
