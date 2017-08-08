@@ -359,35 +359,26 @@ void hvf_inject_interrupts(CPUState *cpu_state)
     X86CPU *x86cpu = X86_CPU(cpu_state);
     CPUX86State *env = &x86cpu->env;
 
-    if ((rvmcs(cpu_state->hvf_fd, VMCS_GUEST_INTERRUPTIBILITY) &
-        VMCS_INTERRUPTIBILITY_NMI_BLOCKING)) {
-        env->hflags2 |= HF2_NMI_MASK;
-    } else {
-        env->hflags2 &= ~HF2_NMI_MASK;
+    uint64_t info = 0;
+    uint8_t vector = 0;
+    uint64_t intr_type = 0;
+    if (env->interrupt_injected != -1) {
+        vector = env->interrupt_injected;
+        intr_type = VMCS_INTR_T_SWINTR;
+    } else if (env->exception_injected != -1) {
+        vector = env->exception_injected;
+        if (vector == EXCP03_INT3 || vector == EXCP04_INTO) {
+            intr_type = VMCS_INTR_T_SWEXCEPTION;
+        } else {
+            intr_type = VMCS_INTR_T_HWEXCEPTION;
+        }
+    } else if (env->nmi_injected) {
+        vector = NMI_VEC;
+        intr_type = VMCS_INTR_T_NMI;
     }
 
-    uint64_t info = 0;
-    if (env->interrupt_injected != -1 || env->exception_injected != -1 ||
-        env->nmi_injected == true) {
-        uint8_t vector;
-        uint64_t intr_type;
-        if (env->interrupt_injected != -1) {
-            vector = env->interrupt_injected;
-            intr_type = VMCS_INTR_T_SWINTR;
-        } else if (env->exception_injected != -1) {
-            vector = env->exception_injected;
-            if (vector == EXCP03_INT3 || vector == EXCP04_INTO) {
-                intr_type = VMCS_INTR_T_SWEXCEPTION;
-            } else {
-                intr_type = VMCS_INTR_T_HWEXCEPTION;
-            }
-        } else {
-            vector = NMI_VEC;
-            intr_type = VMCS_INTR_T_NMI;
-        }
-
-        info = vector | intr_type;
-
+    if (vector) {
+        info = vector | intr_type | VMCS_INTR_VALID;
         uint64_t reason = rvmcs(cpu_state->hvf_fd, VMCS_EXIT_REASON);
         if (env->nmi_injected && reason != EXIT_REASON_TASK_SWITCH) {
             env->hflags2 |= HF2_NMI_MASK;
@@ -400,18 +391,6 @@ void hvf_inject_interrupts(CPUState *cpu_state)
                 intr_type == VMCS_INTR_T_SWEXCEPTION) {
                 wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INST_LENGTH, env->ins_len);
             }
-            //if (vector == EXCEPTION_BP || vector == EXCEPTION_OF) {
-            //if (intr_type == VMCS_INTR_T_SWEXCEPTION) {
-                /*
-                 * VT-x requires #BP and #OF to be injected as software
-                 * exceptions.
-                 */
-                //info &= ~VMCS_INTR_T_MASK;
-                //info |= VMCS_INTR_T_SWEXCEPTION;
-                //uint64_t ins_len = rvmcs(cpu_state->hvf_fd,
-                 //                        VMCS_EXIT_INSTRUCTION_LENGTH);
-                //wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INST_LENGTH, env->ins_len);
-            //}
 
             if (env->has_error_code) {
                 wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_EXCEPTION_ERROR,

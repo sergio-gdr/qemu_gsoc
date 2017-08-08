@@ -433,16 +433,16 @@ void hvf_handle_io(CPUArchState *env, uint16_t port, void *buffer,
 static void do_hvf_cpu_synchronize_state(CPUState *cpu, run_on_cpu_data arg)
 {
     CPUState *cpu_state = cpu;
-    if (cpu_state->hvf_vcpu_dirty == 0) {
+    if (cpu_state->vcpu_dirty == 0) {
         hvf_get_registers(cpu_state);
     }
 
-    cpu_state->hvf_vcpu_dirty = 1;
+    cpu_state->vcpu_dirty = 1;
 }
 
 void hvf_cpu_synchronize_state(CPUState *cpu_state)
 {
-    if (cpu_state->hvf_vcpu_dirty == 0) {
+    if (cpu_state->vcpu_dirty == 0) {
         run_on_cpu(cpu_state, do_hvf_cpu_synchronize_state, RUN_ON_CPU_NULL);
     }
 }
@@ -451,7 +451,7 @@ static void do_hvf_cpu_synchronize_post_reset(CPUState *cpu, run_on_cpu_data arg
 {
     CPUState *cpu_state = cpu;
     hvf_put_registers(cpu_state);
-    cpu_state->hvf_vcpu_dirty = false;
+    cpu_state->vcpu_dirty = false;
 }
 
 void hvf_cpu_synchronize_post_reset(CPUState *cpu_state)
@@ -463,7 +463,7 @@ void _hvf_cpu_synchronize_post_init(CPUState *cpu, run_on_cpu_data arg)
 {
     CPUState *cpu_state = cpu;
     hvf_put_registers(cpu_state);
-    cpu_state->hvf_vcpu_dirty = false;
+    cpu_state->vcpu_dirty = false;
 }
 
 void hvf_cpu_synchronize_post_init(CPUState *cpu_state)
@@ -696,10 +696,10 @@ int hvf_init_vcpu(CPUState *cpu)
     init_cpuid(cpu);
 
     hvf_state->hvf_caps = (struct hvf_vcpu_caps *)g_malloc0(sizeof(struct hvf_vcpu_caps));
-    env->hvf_emul = (struct hvf_x86_state *)g_malloc0(sizeof(struct hvf_x86_state));
+    env->hvf_emul = (HVFX86EmulatorState *)g_malloc0(sizeof(HVFX86EmulatorState));
 
     r = hv_vcpu_create((hv_vcpuid_t *)&cpu->hvf_fd, HV_VCPU_DEFAULT);
-    cpu->hvf_vcpu_dirty = 1;
+    cpu->vcpu_dirty = 1;
     assert_hvf_ok(r);
 
     if (hv_vmx_read_capability(HV_VMX_CAP_PINBASED,
@@ -790,9 +790,9 @@ int hvf_vcpu_exec(CPUState *cpu)
     }
 
     do {
-        if (cpu->hvf_vcpu_dirty) {
+        if (cpu->vcpu_dirty) {
             hvf_put_registers(cpu);
-            cpu->hvf_vcpu_dirty = false;
+            cpu->vcpu_dirty = false;
         }
 
         if (rvmcs(cpu->hvf_fd, VMCS_GUEST_INTERRUPTIBILITY) &
@@ -852,6 +852,12 @@ int hvf_vcpu_exec(CPUState *cpu)
                 env->has_error_code = true;
                 env->error_code = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_ERROR);
             }
+        }
+        if ((rvmcs(cpu->hvf_fd, VMCS_GUEST_INTERRUPTIBILITY) &
+            VMCS_INTERRUPTIBILITY_NMI_BLOCKING)) {
+            env->hflags2 |= HF2_NMI_MASK;
+        } else {
+            env->hflags2 &= ~HF2_NMI_MASK;
         }
 
         rip = rreg(cpu->hvf_fd, HV_X86_RIP);

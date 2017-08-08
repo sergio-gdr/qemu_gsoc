@@ -357,7 +357,7 @@ typedef struct x68_segment_selector {
 } __attribute__ ((__packed__)) x68_segment_selector;
 
 /* Definition of hvf_x86_state is here */
-struct hvf_x86_state {
+typedef struct HVFX86EmulatorState {
     int interruptable;
     uint64_t fetch_rip;
     uint64_t rip;
@@ -366,7 +366,7 @@ struct hvf_x86_state {
     struct lazy_flags   lflags;
     struct x86_efer efer;
     uint8_t mmio_buf[4096];
-};
+} HVFX86EmulatorState;
 
 /*
 * hvf xsave area

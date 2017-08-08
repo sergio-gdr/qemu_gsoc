@@ -228,7 +228,7 @@ static bool is_host_reg(struct CPUState *cpu, addr_t ptr)
 
     return (ptr > (addr_t)cpu && ptr < (addr_t)cpu + sizeof(struct CPUState)) ||
            (ptr > (addr_t)env->hvf_emul && ptr <
-            (addr_t)(env->hvf_emul + sizeof(struct hvf_x86_state)));
+            (addr_t)(env->hvf_emul + sizeof(HVFX86EmulatorState)));
 }
 
 void write_val_ext(struct CPUState *cpu, addr_t ptr, addr_t val, int size)

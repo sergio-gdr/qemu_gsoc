@@ -1194,7 +1194,7 @@ typedef struct CPUX86State {
     int64_t tsc_khz;
     int64_t user_tsc_khz; /* for sanity check only */
     void *kvm_xsave_buf;
-    struct hvf_x86_state *hvf_emul;
+    HVFX86EmulatorState *hvf_emul;
 
     uint64_t mcg_cap;
     uint64_t mcg_ctl;
