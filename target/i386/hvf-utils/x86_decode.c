@@ -29,7 +29,10 @@
 
 static void decode_invalid(CPUState *cpu, struct x86_decode *decode)
 {
-    printf("%llx: failed to decode instruction ", cpu->hvf_x86->fetch_rip -
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
+
+    printf("%llx: failed to decode instruction ", env->hvf_emul->fetch_rip -
            decode->len);
     for (int i = 0; i < decode->opcode_len; i++) {
         printf("%x ", decode->opcode[i]);
@@ -64,6 +67,8 @@ static inline uint64_t decode_bytes(CPUState *cpu, struct x86_decode *decode,
                                     int size)
 {
     addr_t val = 0;
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
 
     switch (size) {
     case 1:
@@ -75,7 +80,7 @@ static inline uint64_t decode_bytes(CPUState *cpu, struct x86_decode *decode,
         VM_PANIC_EX("%s invalid size %d\n", __func__, size);
         break;
     }
-    addr_t va  = linear_rip(cpu, RIP(cpu)) + decode->len;
+    addr_t va  = linear_rip(cpu, RIP(env)) + decode->len;
     vmx_read_mem(cpu, &val, va, size);
     decode->len += size;
 
@@ -510,6 +515,9 @@ static void decode_ffgroup(CPUState *cpu, struct x86_decode *decode)
 
 static void decode_sldtgroup(CPUState *cpu, struct x86_decode *decode)
 {
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
+
     enum x86_decode_cmd group[] = {
         X86_DECODE_CMD_SLDT,
         X86_DECODE_CMD_STR,
@@ -521,7 +529,7 @@ static void decode_sldtgroup(CPUState *cpu, struct x86_decode *decode)
         X86_DECODE_CMD_INVL
     };
     decode->cmd = group[decode->modrm.reg];
-    printf("%llx: decode_sldtgroup: %d\n", cpu->hvf_x86->fetch_rip,
+    printf("%llx: decode_sldtgroup: %d\n", env->hvf_emul->fetch_rip,
             decode->modrm.reg);
 }
 
@@ -1638,6 +1646,8 @@ void calc_modrm_operand16(CPUState *cpu, struct x86_decode *decode,
 {
     addr_t ptr = 0;
     x86_reg_segment seg = REG_SEG_DS;
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
 
     if (!decode->modrm.mod && 6 == decode->modrm.rm) {
         op->ptr = (uint16_t)decode->displacement;
@@ -1650,31 +1660,31 @@ void calc_modrm_operand16(CPUState *cpu, struct x86_decode *decode,
 
     switch (decode->modrm.rm) {
     case 0:
-        ptr += BX(cpu) + SI(cpu);
+        ptr += BX(env) + SI(env);
         break;
     case 1:
-        ptr += BX(cpu) + DI(cpu);
+        ptr += BX(env) + DI(env);
         break;
     case 2:
-        ptr += BP(cpu) + SI(cpu);
+        ptr += BP(env) + SI(env);
         seg = REG_SEG_SS;
         break;
     case 3:
-        ptr += BP(cpu) + DI(cpu);
+        ptr += BP(env) + DI(env);
         seg = REG_SEG_SS;
         break;
     case 4:
-        ptr += SI(cpu);
+        ptr += SI(env);
         break;
     case 5:
-        ptr += DI(cpu);
+        ptr += DI(env);
         break;
     case 6:
-        ptr += BP(cpu);
+        ptr += BP(env);
         seg = REG_SEG_SS;
         break;
     case 7:
-        ptr += BX(cpu);
+        ptr += BX(env);
         break;
     }
 calc_addr:
@@ -1689,6 +1699,8 @@ addr_t get_reg_ref(CPUState *cpu, int reg, int is_extended, int size)
 {
     addr_t ptr = 0;
     int which = 0;
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
 
     if (is_extended) {
         reg |= REG_R8;
@@ -1699,15 +1711,15 @@ addr_t get_reg_ref(CPUState *cpu, int reg, int is_extended, int size)
     case 1:
         if (is_extended || reg < 4) {
             which = 1;
-            ptr = (addr_t)&RL(cpu, reg);
+            ptr = (addr_t)&RL(env, reg);
         } else {
             which = 2;
-            ptr = (addr_t)&RH(cpu, reg - 4);
+            ptr = (addr_t)&RH(env, reg - 4);
         }
         break;
     default:
         which = 3;
-        ptr = (addr_t)&RRX(cpu, reg);
+        ptr = (addr_t)&RRX(env, reg);
         break;
     }
     return ptr;
@@ -1758,6 +1770,8 @@ void calc_modrm_operand32(CPUState *cpu, struct x86_decode *decode,
     x86_reg_segment seg = REG_SEG_DS;
     addr_t ptr = 0;
     int addr_size = decode->addressing_size;
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
 
     if (decode->displacement_size) {
         ptr = sign(decode->displacement, decode->displacement_size);
@@ -1767,7 +1781,7 @@ void calc_modrm_operand32(CPUState *cpu, struct x86_decode *decode,
         ptr += get_sib_val(cpu, decode, &seg);
     } else if (!decode->modrm.mod && 5 == decode->modrm.rm) {
         if (x86_is_long_mode(cpu)) {
-            ptr += RIP(cpu) + decode->len;
+            ptr += RIP(env) + decode->len;
         } else {
             ptr = decode->displacement;
         }
@@ -1794,6 +1808,8 @@ void calc_modrm_operand64(CPUState *cpu, struct x86_decode *decode,
     int rm = decode->modrm.rm;
     addr_t ptr;
     int src = decode->modrm.rm;
+    X86CPU *x86_cpu = X86_CPU(cpu);
+    CPUX86State *env = &x86_cpu->env;
 
     if (decode->displacement_size) {
         offset = sign(decode->displacement, decode->displacement_size);
@@ -1802,7 +1818,7 @@ void calc_modrm_operand64(CPUState *cpu, struct x86_decode *decode,
     if (4 == rm) {
         ptr = get_sib_val(cpu, decode, &seg) + offset;
     } else if (0 == mod && 5 == rm) {
-        ptr = RIP(cpu) + decode->len + (int32_t) offset;
+        ptr = RIP(env) + decode->len + (int32_t) offset;
     } else {
         ptr = get_reg_val(cpu, src, decode->rex.b, 8) + (int64_t) offset;
     }

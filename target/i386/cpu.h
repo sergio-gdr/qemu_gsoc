@@ -23,6 +23,7 @@
 #include "qemu-common.h"
 #include "cpu-qom.h"
 #include "standard-headers/asm-x86/hyperv.h"
+#include "target/i386/hvf-utils/x86.h"
 
 #ifdef TARGET_X86_64
 #define TARGET_LONG_BITS 64
@@ -1187,11 +1188,13 @@ typedef struct CPUX86State {
     int32_t interrupt_injected;
     uint8_t soft_interrupt;
     uint8_t has_error_code;
+    uint32_t ins_len;
     uint32_t sipi_vector;
     bool tsc_valid;
     int64_t tsc_khz;
     int64_t user_tsc_khz; /* for sanity check only */
     void *kvm_xsave_buf;
+    HVFX86EmulatorState *hvf_emul;
 
     uint64_t mcg_cap;
     uint64_t mcg_ctl;
