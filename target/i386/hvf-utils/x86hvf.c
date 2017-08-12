@@ -359,9 +359,9 @@ void hvf_inject_interrupts(CPUState *cpu_state)
     X86CPU *x86cpu = X86_CPU(cpu_state);
     CPUX86State *env = &x86cpu->env;
 
-    uint64_t info = 0;
-    uint8_t vector = 0;
-    uint64_t intr_type = 0;
+    uint8_t vector;
+    uint64_t intr_type;
+    bool have_event = true;
     if (env->interrupt_injected != -1) {
         vector = env->interrupt_injected;
         intr_type = VMCS_INTR_T_SWINTR;
@@ -375,17 +375,19 @@ void hvf_inject_interrupts(CPUState *cpu_state)
     } else if (env->nmi_injected) {
         vector = NMI_VEC;
         intr_type = VMCS_INTR_T_NMI;
+    } else {
+        have_event = false;
     }
 
-    if (vector) {
+    uint64_t info = 0;
+    if (have_event) {
         info = vector | intr_type | VMCS_INTR_VALID;
         uint64_t reason = rvmcs(cpu_state->hvf_fd, VMCS_EXIT_REASON);
         if (env->nmi_injected && reason != EXIT_REASON_TASK_SWITCH) {
-            env->hflags2 |= HF2_NMI_MASK;
             vmx_clear_nmi_blocking(cpu_state);
         }
 
-        if ((env->hflags2 & HF2_NMI_MASK) || intr_type != VMCS_INTR_T_NMI) {
+        if (!(env->hflags2 & HF2_NMI_MASK) || intr_type != VMCS_INTR_T_NMI) {
             info &= ~(1 << 12); /* clear undefined bit */
             if (intr_type == VMCS_INTR_T_SWINTR ||
                 intr_type == VMCS_INTR_T_SWEXCEPTION) {
@@ -402,7 +404,7 @@ void hvf_inject_interrupts(CPUState *cpu_state)
     }
 
     if (cpu_state->interrupt_request & CPU_INTERRUPT_NMI) {
-        if (env->hflags2 & HF2_NMI_MASK && !(info & VMCS_INTR_VALID)) {
+        if (!(env->hflags2 & HF2_NMI_MASK) && !(info & VMCS_INTR_VALID)) {
             cpu_state->interrupt_request &= ~CPU_INTERRUPT_NMI;
             info = VMCS_INTR_VALID | VMCS_INTR_T_NMI | NMI_VEC;
             wvmcs(cpu_state->hvf_fd, VMCS_ENTRY_INTR_INFO, info);
@@ -411,7 +413,7 @@ void hvf_inject_interrupts(CPUState *cpu_state)
         }
     }
 
-    if ((env->hflags & HF_INHIBIT_IRQ_MASK) &&
+    if (!(env->hflags & HF_INHIBIT_IRQ_MASK) &&
         (cpu_state->interrupt_request & CPU_INTERRUPT_HARD) &&
         (EFLAGS(env) & IF_MASK) && !(info & VMCS_INTR_VALID)) {
         int line = cpu_get_pic_interrupt(&x86cpu->env);
