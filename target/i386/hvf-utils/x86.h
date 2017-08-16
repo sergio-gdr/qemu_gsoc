@@ -23,7 +23,7 @@
 #include <sys/mman.h>
 #include <stdarg.h>
 #include "qemu-common.h"
-#include "x86_flags.h"
+#include "x86_gen.h"
 
 /* exceptions */
 typedef enum x86_exception {
@@ -76,29 +76,6 @@ typedef enum x86_reg_segment {
     REG_SEG_TR = 7,
 } x86_reg_segment;
 
-typedef struct x86_register {
-    union {
-        struct {
-            uint64_t rrx;               /* full 64 bit */
-        };
-        struct {
-            uint32_t erx;               /* low 32 bit part */
-            uint32_t hi32_unused1;
-        };
-        struct {
-            uint16_t rx;                /* low 16 bit part */
-            uint16_t hi16_unused1;
-            uint32_t hi32_unused2;
-        };
-        struct {
-            uint8_t lx;                 /* low 8 bit part */
-            uint8_t hx;                 /* high 8 bit */
-            uint16_t hi16_unused2;
-            uint32_t hi32_unused3;
-        };
-    };
-} __attribute__ ((__packed__)) x86_register;
-
 typedef enum x86_rflags {
     RFLAGS_CF       = (1L << 0),
     RFLAGS_PF       = (1L << 2),
@@ -119,44 +96,6 @@ typedef enum x86_rflags {
     RFLAGS_ID       = (1L << 21),
 } x86_rflags;
 
-/* rflags register */
-typedef struct x86_reg_flags {
-    union {
-        struct {
-            uint64_t rflags;
-        };
-        struct {
-            uint32_t eflags;
-            uint32_t hi32_unused1;
-        };
-        struct {
-            uint32_t cf:1;
-            uint32_t unused1:1;
-            uint32_t pf:1;
-            uint32_t unused2:1;
-            uint32_t af:1;
-            uint32_t unused3:1;
-            uint32_t zf:1;
-            uint32_t sf:1;
-            uint32_t tf:1;
-            uint32_t ief:1;
-            uint32_t df:1;
-            uint32_t of:1;
-            uint32_t iopl:2;
-            uint32_t nt:1;
-            uint32_t unused4:1;
-            uint32_t rf:1;
-            uint32_t vm:1;
-            uint32_t ac:1;
-            uint32_t vif:1;
-            uint32_t vip:1;
-            uint32_t id:1;
-            uint32_t unused5:10;
-            uint32_t hi32_unused2;
-        };
-    };
-} __attribute__ ((__packed__)) x86_reg_flags;
-
 typedef enum x86_reg_efer {
     EFER_SCE =          (1L << 0),
     EFER_LME =          (1L << 8),
@@ -165,10 +104,6 @@ typedef enum x86_reg_efer {
     EFER_SVME =         (1L << 12),
     EFER_FXSR =         (1L << 14),
 } x86_reg_efer;
-
-typedef struct x86_efer {
-    uint64_t efer;
-} __attribute__ ((__packed__)) x86_efer;
 
 typedef enum x86_reg_cr0 {
     CR0_PE =            (1L << 0),
@@ -356,23 +291,6 @@ typedef struct x68_segment_selector {
     };
 } __attribute__ ((__packed__)) x68_segment_selector;
 
-/* Definition of hvf_x86_state is here */
-struct hvf_x86_state {
-    int hlt;
-    uint64_t init_tsc;
-    
-    int interruptable;
-    uint64_t exp_rip;
-    uint64_t fetch_rip;
-    uint64_t rip;
-    struct x86_register regs[16];
-    struct x86_reg_flags   rflags;
-    struct lazy_flags   lflags;
-    struct x86_efer efer;
-    uint8_t mmio_buf[4096];
-    uint8_t *apic_page;
-};
-
 /*
 * hvf xsave area
 */
@@ -381,12 +299,12 @@ struct hvf_xsave_buf {
 };
 
 /* useful register access  macros */
-#define RIP(cpu)    (cpu->hvf_x86->rip)
-#define EIP(cpu)    ((uint32_t)cpu->hvf_x86->rip)
-#define RFLAGS(cpu) (cpu->hvf_x86->rflags.rflags)
-#define EFLAGS(cpu) (cpu->hvf_x86->rflags.eflags)
+#define RIP(cpu)    (cpu->hvf_emul->rip)
+#define EIP(cpu)    ((uint32_t)cpu->hvf_emul->rip)
+#define RFLAGS(cpu) (cpu->hvf_emul->rflags.rflags)
+#define EFLAGS(cpu) (cpu->hvf_emul->rflags.eflags)
 
-#define RRX(cpu, reg) (cpu->hvf_x86->regs[reg].rrx)
+#define RRX(cpu, reg) (cpu->hvf_emul->regs[reg].rrx)
 #define RAX(cpu)        RRX(cpu, REG_RAX)
 #define RCX(cpu)        RRX(cpu, REG_RCX)
 #define RDX(cpu)        RRX(cpu, REG_RDX)
@@ -404,7 +322,7 @@ struct hvf_xsave_buf {
 #define R14(cpu)        RRX(cpu, REG_R14)
 #define R15(cpu)        RRX(cpu, REG_R15)
 
-#define ERX(cpu, reg)   (cpu->hvf_x86->regs[reg].erx)
+#define ERX(cpu, reg)   (cpu->hvf_emul->regs[reg].erx)
 #define EAX(cpu)        ERX(cpu, REG_RAX)
 #define ECX(cpu)        ERX(cpu, REG_RCX)
 #define EDX(cpu)        ERX(cpu, REG_RDX)
@@ -414,7 +332,7 @@ struct hvf_xsave_buf {
 #define ESI(cpu)        ERX(cpu, REG_RSI)
 #define EDI(cpu)        ERX(cpu, REG_RDI)
 
-#define RX(cpu, reg)   (cpu->hvf_x86->regs[reg].rx)
+#define RX(cpu, reg)   (cpu->hvf_emul->regs[reg].rx)
 #define AX(cpu)        RX(cpu, REG_RAX)
 #define CX(cpu)        RX(cpu, REG_RCX)
 #define DX(cpu)        RX(cpu, REG_RDX)
@@ -424,13 +342,13 @@ struct hvf_xsave_buf {
 #define SI(cpu)        RX(cpu, REG_RSI)
 #define DI(cpu)        RX(cpu, REG_RDI)
 
-#define RL(cpu, reg)   (cpu->hvf_x86->regs[reg].lx)
+#define RL(cpu, reg)   (cpu->hvf_emul->regs[reg].lx)
 #define AL(cpu)        RL(cpu, REG_RAX)
 #define CL(cpu)        RL(cpu, REG_RCX)
 #define DL(cpu)        RL(cpu, REG_RDX)
 #define BL(cpu)        RL(cpu, REG_RBX)
 
-#define RH(cpu, reg)   (cpu->hvf_x86->regs[reg].hx)
+#define RH(cpu, reg)   (cpu->hvf_emul->regs[reg].hx)
 #define AH(cpu)        RH(cpu, REG_RAX)
 #define CH(cpu)        RH(cpu, REG_RCX)
 #define DH(cpu)        RH(cpu, REG_RDX)

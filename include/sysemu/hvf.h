@@ -18,13 +18,13 @@
 #include "qemu/bitops.h"
 #include "exec/memory.h"
 #include "sysemu/accel.h"
+#include "target/i386/hvf-utils/x86_gen.h"
 
 extern int hvf_disabled;
 #ifdef CONFIG_HVF
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
 #include <Hypervisor/hv_error.h>
-#include "target/i386/cpu.h"
 #include "hw/hw.h"
 uint32_t hvf_get_supported_cpuid(uint32_t func, uint32_t idx,
                                  int reg);
@@ -59,9 +59,83 @@ typedef struct HVFState {
 } HVFState;
 extern HVFState *hvf_state;
 
+typedef struct HVFX86EmulatorState {
+    int interruptable;
+    uint64_t fetch_rip;
+    uint64_t rip;
+    struct x86_register {
+        union {
+            struct {
+                uint64_t rrx; /* full 64 bit */
+            };
+            struct {
+                uint32_t erx; /* low 32 bit part */
+                uint32_t hi32_unused1;
+            };
+            struct {
+                uint16_t rx; /* low 16 bit part */
+                uint16_t hi16_unused1;
+                uint32_t hi32_unused2;
+            };
+            struct {
+                uint8_t lx; /* low 8 bit part */
+                uint8_t hx; /* high 8 bit */
+                uint16_t hi16_unused2;
+                uint32_t hi32_unused3;
+            };
+        };
+    } __attribute__ ((__packed__)) regs[16];
+    /* rflags register */
+    struct x86_reg_flags {
+        union {
+            struct {
+                uint64_t rflags;
+            };
+            struct {
+                uint32_t eflags;
+                uint32_t hi32_unused1;
+            };
+            struct {
+                uint32_t cf:1;
+                uint32_t unused1:1;
+                uint32_t pf:1;
+                uint32_t unused2:1;
+                uint32_t af:1;
+                uint32_t unused3:1;
+                uint32_t zf:1;
+                uint32_t sf:1;
+                uint32_t tf:1;
+                uint32_t ief:1;
+                uint32_t df:1;
+                uint32_t of:1;
+                uint32_t iopl:2;
+                uint32_t nt:1;
+                uint32_t unused4:1;
+                uint32_t rf:1;
+                uint32_t vm:1;
+                uint32_t ac:1;
+                uint32_t vif:1;
+                uint32_t vip:1;
+                uint32_t id:1;
+                uint32_t unused5:10;
+                uint32_t hi32_unused2;
+            };
+        };
+    } __attribute__ ((__packed__)) rflags;
+    struct lazy_flags {
+        addr_t result;
+        addr_t auxbits;
+    } lflags;
+    struct x86_efer {
+        uint64_t efer;
+    } __attribute__ ((__packed__)) efer;
+    uint8_t mmio_buf[4096];
+} HVFX86EmulatorState;
+#ifdef CONFIG_HVF
+#include "target/i386/cpu.h"
+#endif
+
 void hvf_set_phys_mem(MemoryRegionSection *, bool);
-void hvf_handle_io(CPUArchState *, uint16_t, void *,
-                  int, int, int);
 hvf_slot *hvf_find_overlap_slot(uint64_t, uint64_t);
 
 /* Disable HVF if |disable| is 1, otherwise, enable it iff it is supported by
