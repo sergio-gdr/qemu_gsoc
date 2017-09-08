@@ -53,7 +53,7 @@
 
 pthread_rwlock_t mem_lock = PTHREAD_RWLOCK_INITIALIZER;
 HVFState *hvf_state;
-static int hvf_disabled = 1;
+int hvf_disabled = 1;
 
 static void assert_hvf_ok(hv_return_t ret)
 {
@@ -62,26 +62,26 @@ static void assert_hvf_ok(hv_return_t ret)
     }
 
     switch (ret) {
-        case HV_ERROR:
-            fprintf(stderr, "Error: HV_ERROR\n");
-            break;
-        case HV_BUSY:
-            fprintf(stderr, "Error: HV_BUSY\n");
-            break;
-        case HV_BAD_ARGUMENT:
-            fprintf(stderr, "Error: HV_BAD_ARGUMENT\n");
-            break;
-        case HV_NO_RESOURCES:
-            fprintf(stderr, "Error: HV_NO_RESOURCES\n");
-            break;
-        case HV_NO_DEVICE:
-            fprintf(stderr, "Error: HV_NO_DEVICE\n");
-            break;
-        case HV_UNSUPPORTED:
-            fprintf(stderr, "Error: HV_UNSUPPORTED\n");
-            break;
-        default:
-            fprintf(stderr, "Unknown Error\n");
+    case HV_ERROR:
+        error_report("Error: HV_ERROR\n");
+        break;
+    case HV_BUSY:
+        error_report("Error: HV_BUSY\n");
+        break;
+    case HV_BAD_ARGUMENT:
+        error_report("Error: HV_BAD_ARGUMENT\n");
+        break;
+    case HV_NO_RESOURCES:
+        error_report("Error: HV_NO_RESOURCES\n");
+        break;
+    case HV_NO_DEVICE:
+        error_report("Error: HV_NO_DEVICE\n");
+        break;
+    case HV_UNSUPPORTED:
+        error_report("Error: HV_UNSUPPORTED\n");
+        break;
+    default:
+        error_report("Unknown Error\n");
     }
 
     abort();
@@ -112,11 +112,10 @@ struct mac_slot {
 struct mac_slot mac_slots[32];
 #define ALIGN(x, y)  (((x) + (y) - 1) & ~((y) - 1))
 
-int __hvf_set_memory(hvf_slot *slot)
+static int do_hvf_set_memory(hvf_slot *slot)
 {
     struct mac_slot *macslot;
     hv_memory_flags_t flags;
-    pthread_rwlock_wrlock(&mem_lock);
     hv_return_t ret;
 
     macslot = &mac_slots[slot->slot_id];
@@ -130,7 +129,6 @@ int __hvf_set_memory(hvf_slot *slot)
     }
 
     if (!slot->size) {
-        pthread_rwlock_unlock(&mem_lock);
         return 0;
     }
 
@@ -141,7 +139,6 @@ int __hvf_set_memory(hvf_slot *slot)
     macslot->size = slot->size;
     ret = hv_vm_map((hv_uvaddr_t)slot->mem, slot->start, slot->size, flags);
     assert_hvf_ok(ret);
-    pthread_rwlock_unlock(&mem_lock);
     return 0;
 }
 
@@ -170,8 +167,8 @@ void hvf_set_phys_mem(MemoryRegionSection *section, bool add)
     /* Region needs to be reset. set the size to 0 and remap it. */
     if (mem) {
         mem->size = 0;
-        if (__hvf_set_memory(mem)) {
-            fprintf(stderr, "Failed to reset overlapping slot\n");
+        if (do_hvf_set_memory(mem)) {
+            error_report("Failed to reset overlapping slot\n");
             abort();
         }
     }
@@ -191,7 +188,7 @@ void hvf_set_phys_mem(MemoryRegionSection *section, bool add)
     }
 
     if (x == hvf_state->num_slots) {
-        fprintf(stderr, "No free slots\n");
+        error_report("No free slots\n");
         abort();
     }
 
@@ -199,22 +196,10 @@ void hvf_set_phys_mem(MemoryRegionSection *section, bool add)
     mem->mem = memory_region_get_ram_ptr(area) + section->offset_within_region;
     mem->start = section->offset_within_address_space;
 
-    if (__hvf_set_memory(mem)) {
-        fprintf(stderr, "Error registering new memory slot\n");
+    if (do_hvf_set_memory(mem)) {
+        error_report("Error registering new memory slot\n");
         abort();
     }
-}
-
-/* return -1 if no bit is set */
-static int get_highest_priority_int(uint32_t *tab)
-{
-    int i;
-    for (i = 7; i >= 0; i--) {
-        if (tab[i] != 0) {
-            return i * 32 + apic_fls_bit(tab[i]);
-        }
-    }
-    return -1;
 }
 
 void vmx_update_tpr(CPUState *cpu)
@@ -263,11 +248,11 @@ void hvf_handle_io(CPUArchState *env, uint16_t port, void *buffer,
         ptr += size;
     }
 }
-void __hvf_cpu_synchronize_state(CPUState *cpu, run_on_cpu_data arg)
 
 /* TODO: synchronize vcpu state */
+static void do_hvf_cpu_synchronize_state(CPUState *cpu, run_on_cpu_data arg)
 {
-    CPUState *cpu_state = cpu;//(CPUState *)data;
+    CPUState *cpu_state = cpu;
     if (cpu_state->hvf_vcpu_dirty == 0) {
         hvf_get_registers(cpu_state);
     }
@@ -277,12 +262,12 @@ void __hvf_cpu_synchronize_state(CPUState *cpu, run_on_cpu_data arg)
 
 void hvf_cpu_synchronize_state(CPUState *cpu_state)
 {
-        run_on_cpu(cpu_state, __hvf_cpu_synchronize_state, RUN_ON_CPU_NULL);
     if (cpu_state->hvf_vcpu_dirty == 0) {
+        run_on_cpu(cpu_state, do_hvf_cpu_synchronize_state, RUN_ON_CPU_NULL);
     }
 }
 
-void __hvf_cpu_synchronize_post_reset(CPUState *cpu, run_on_cpu_data arg)
+static void do_hvf_cpu_synchronize_post_reset(CPUState *cpu, run_on_cpu_data arg)
 {
     CPUState *cpu_state = cpu;
     hvf_put_registers(cpu_state);
@@ -291,7 +276,7 @@ void __hvf_cpu_synchronize_post_reset(CPUState *cpu, run_on_cpu_data arg)
 
 void hvf_cpu_synchronize_post_reset(CPUState *cpu_state)
 {
-    run_on_cpu(cpu_state, __hvf_cpu_synchronize_post_reset, RUN_ON_CPU_NULL);
+    run_on_cpu(cpu_state, do_hvf_cpu_synchronize_post_reset, RUN_ON_CPU_NULL);
 }
 
 void _hvf_cpu_synchronize_post_init(CPUState *cpu, run_on_cpu_data arg)
@@ -354,12 +339,11 @@ static MemoryListener hvf_memory_listener = {
     .region_del = hvf_region_del,
 };
 
-static MemoryListener hvf_io_listener = {
-    .priority = 10,
-};
+void hvf_reset_vcpu(CPUState *cpu) {
 
-void vmx_reset_vcpu(CPUState *cpu) {
-
+    /* TODO: this shouldn't be needed; there is already a call to
+     * cpu_synchronize_all_post_reset in vl.c
+     */
     wvmcs(cpu->hvf_fd, VMCS_ENTRY_CTLS, 0);
     wvmcs(cpu->hvf_fd, VMCS_GUEST_IA32_EFER, 0);
     macvm_set_cr0(cpu->hvf_fd, 0x60000010);
@@ -514,7 +498,7 @@ int hvf_init_vcpu(CPUState *cpu)
 
     wvmcs(cpu->hvf_fd, VMCS_TPR_THRESHOLD, 0);
 
-    vmx_reset_vcpu(cpu);
+    hvf_reset_vcpu(cpu);
 
     x86cpu = X86_CPU(cpu);
     x86cpu->env.kvm_xsave_buf = qemu_memalign(4096,
@@ -536,7 +520,6 @@ int hvf_init_vcpu(CPUState *cpu)
     return 0;
 }
 
-int hvf_enabled() { return !hvf_disabled; }
 void hvf_disable(int shouldDisable)
 {
     hvf_disabled = shouldDisable;
@@ -589,8 +572,6 @@ int hvf_vcpu_exec(CPUState *cpu)
         RFLAGS(cpu) = rreg(cpu->hvf_fd, HV_X86_RFLAGS);
         env->eflags = RFLAGS(cpu);
 
-        trace_hvf_vm_exit(exit_reason, exit_qual);
-
         qemu_mutex_lock_iothread();
 
         update_apic_tpr(cpu);
@@ -598,239 +579,226 @@ int hvf_vcpu_exec(CPUState *cpu)
 
         ret = 0;
         switch (exit_reason) {
-            case EXIT_REASON_HLT: {
-                macvm_set_rip(cpu, rip + ins_len);
-                if (!((cpu->interrupt_request & CPU_INTERRUPT_HARD) && (EFLAGS(cpu) & IF_MASK))
-                    && !(cpu->interrupt_request & CPU_INTERRUPT_NMI) &&
-                    !(idtvec_info & VMCS_IDT_VEC_VALID)) {
-                    cpu->halted = 1;
-                    ret = EXCP_HLT;
-                }
-                ret = EXCP_INTERRUPT;
-                break;
+        case EXIT_REASON_HLT: {
+            macvm_set_rip(cpu, rip + ins_len);
+            if (!((cpu->interrupt_request & CPU_INTERRUPT_HARD) &&
+                (EFLAGS(cpu) & IF_MASK))
+                && !(cpu->interrupt_request & CPU_INTERRUPT_NMI) &&
+                !(idtvec_info & VMCS_IDT_VEC_VALID)) {
+                cpu->halted = 1;
+                ret = EXCP_HLT;
             }
-            case EXIT_REASON_MWAIT: {
-                ret = EXCP_INTERRUPT;
-                break;
+            ret = EXCP_INTERRUPT;
+            break;
+        }
+        case EXIT_REASON_MWAIT: {
+            ret = EXCP_INTERRUPT;
+            break;
+        }
+            /* Need to check if MMIO or unmmaped fault */
+        case EXIT_REASON_EPT_FAULT:
+        {
+            hvf_slot *slot;
+            addr_t gpa = rvmcs(cpu->hvf_fd, VMCS_GUEST_PHYSICAL_ADDRESS);
+
+            if (((idtvec_info & VMCS_IDT_VEC_VALID) == 0) &&
+                ((exit_qual & EXIT_QUAL_NMIUDTI) != 0)) {
+                vmx_set_nmi_blocking(cpu);
             }
-                /* Need to check if MMIO or unmmaped fault */
-            case EXIT_REASON_EPT_FAULT:
-            {
-                hvf_slot *slot;
-                addr_t gpa = rvmcs(cpu->hvf_fd, VMCS_GUEST_PHYSICAL_ADDRESS);
-                trace_hvf_vm_exit_gpa(gpa);
 
-                if ((idtvec_info & VMCS_IDT_VEC_VALID) == 0 && (exit_qual & EXIT_QUAL_NMIUDTI) != 0)
-                    vmx_set_nmi_blocking(cpu);
-
-                slot = hvf_find_overlap_slot(gpa, gpa);
-                // mmio
-                if (ept_emulation_fault(exit_qual) && !slot) {
-                    struct x86_decode decode;
-
-                    load_regs(cpu);
-                    cpu->hvf_x86->fetch_rip = rip;
-
-                    decode_instruction(cpu, &decode);
-                    exec_instruction(cpu, &decode);
-                    store_regs(cpu);
-                    break;
-                }
-#ifdef DIRTY_VGA_TRACKING
-                if (slot) {
-                    bool read = exit_qual & EPT_VIOLATION_DATA_READ ? 1 : 0;
-                    bool write = exit_qual & EPT_VIOLATION_DATA_WRITE ? 1 : 0;
-                    if (!read && !write)
-                        break;
-                    int flags = HV_MEMORY_READ | HV_MEMORY_EXEC;
-                    if (write) flags |= HV_MEMORY_WRITE;
-
-                    pthread_rwlock_wrlock(&mem_lock);
-                    if (write)
-                        mark_slot_page_dirty(slot, gpa);
-                    hv_vm_protect(gpa & ~0xfff, 4096, flags);
-                    pthread_rwlock_unlock(&mem_lock);
-                }
-#endif
-                break;
-            }
-            case EXIT_REASON_INOUT:
-            {
-                uint32_t in = (exit_qual & 8) != 0;
-                uint32_t size =  (exit_qual & 7) + 1;
-                uint32_t string =  (exit_qual & 16) != 0;
-                uint32_t port =  exit_qual >> 16;
-                //uint32_t rep = (exit_qual & 0x20) != 0;
-
-#if 1
-                if (!string && in) {
-                    uint64_t val = 0;
-                    load_regs(cpu);
-                    hvf_handle_io(env, port, &val, 0, size, 1);
-                    if (size == 1) AL(cpu) = val;
-                    else if (size == 2) AX(cpu) = val;
-                    else if (size == 4) RAX(cpu) = (uint32_t)val;
-                    else VM_PANIC("size");
-                    RIP(cpu) += ins_len;
-                    store_regs(cpu);
-                    break;
-                } else if (!string && !in) {
-                    RAX(cpu) = rreg(cpu->hvf_fd, HV_X86_RAX);
-                    hvf_handle_io(env, port, &RAX(cpu), 1, size, 1);
-                    macvm_set_rip(cpu, rip + ins_len);
-                    break;
-                }
-#endif
+            slot = hvf_find_overlap_slot(gpa, gpa);
+            /* mmio */
+            if (ept_emulation_fault(exit_qual) && !slot) {
                 struct x86_decode decode;
 
                 load_regs(cpu);
                 cpu->hvf_x86->fetch_rip = rip;
 
                 decode_instruction(cpu, &decode);
-                VM_PANIC_ON(ins_len != decode.len);
                 exec_instruction(cpu, &decode);
                 store_regs(cpu);
-
                 break;
             }
-            case EXIT_REASON_CPUID: {
-                uint32_t rax = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RAX);
-                uint32_t rbx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RBX);
-                uint32_t rcx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RCX);
-                uint32_t rdx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RDX);
+#ifdef DIRTY_VGA_TRACKING
+            /* TODO: handle dirty page tracking */
+#endif
+            break;
+        }
+        case EXIT_REASON_INOUT:
+        {
+            uint32_t in = (exit_qual & 8) != 0;
+            uint32_t size =  (exit_qual & 7) + 1;
+            uint32_t string =  (exit_qual & 16) != 0;
+            uint32_t port =  exit_qual >> 16;
+            /*uint32_t rep = (exit_qual & 0x20) != 0;*/
 
-                get_cpuid_func(cpu, rax, rcx, &rax, &rbx, &rcx, &rdx);
-
-                wreg(cpu->hvf_fd, HV_X86_RAX, rax);
-                wreg(cpu->hvf_fd, HV_X86_RBX, rbx);
-                wreg(cpu->hvf_fd, HV_X86_RCX, rcx);
-                wreg(cpu->hvf_fd, HV_X86_RDX, rdx);
-
-                macvm_set_rip(cpu, rip + ins_len);
-                break;
-            }
-            case EXIT_REASON_XSETBV: {
-                X86CPU *x86_cpu = X86_CPU(cpu);
-                CPUX86State *env = &x86_cpu->env;
-                uint32_t eax = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RAX);
-                uint32_t ecx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RCX);
-                uint32_t edx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RDX);
-
-                if (ecx) {
-                    macvm_set_rip(cpu, rip + ins_len);
-                    break;
-                }
-                env->xcr0 = ((uint64_t)edx << 32) | eax;
-                wreg(cpu->hvf_fd, HV_X86_XCR0, env->xcr0 | 1);
-                macvm_set_rip(cpu, rip + ins_len);
-                break;
-            }
-            case EXIT_REASON_INTR_WINDOW:
-                vmx_clear_int_window_exiting(cpu);
-                ret = EXCP_INTERRUPT;
-                break;
-            case EXIT_REASON_NMI_WINDOW:
-                vmx_clear_nmi_window_exiting(cpu);
-                ret = EXCP_INTERRUPT;
-                break;
-            case EXIT_REASON_EXT_INTR:
-                /* force exit and allow io handling */
-                ret = EXCP_INTERRUPT;
-                break;
-            case EXIT_REASON_RDMSR:
-            case EXIT_REASON_WRMSR:
-            {
+#if 1
+            if (!string && in) {
+                uint64_t val = 0;
                 load_regs(cpu);
-                if (exit_reason == EXIT_REASON_RDMSR)
-                    simulate_rdmsr(cpu);
-                else
-                    simulate_wrmsr(cpu);
-                RIP(cpu) += rvmcs(cpu->hvf_fd, VMCS_EXIT_INSTRUCTION_LENGTH);
-                store_regs(cpu);
-                break;
-            }
-            case EXIT_REASON_CR_ACCESS: {
-                int cr;
-                int reg;
-
-                load_regs(cpu);
-                cr = exit_qual & 15;
-                reg = (exit_qual >> 8) & 15;
-
-                switch (cr) {
-                    case 0x0: {
-                        macvm_set_cr0(cpu->hvf_fd, RRX(cpu, reg));
-                        break;
-                    }
-                    case 4: {
-                        macvm_set_cr4(cpu->hvf_fd, RRX(cpu, reg));
-                        break;
-                    }
-                    case 8: {
-                        X86CPU *x86_cpu = X86_CPU(cpu);
-                        if (exit_qual & 0x10) {
-                            RRX(cpu, reg) = cpu_get_apic_tpr(x86_cpu->apic_state);
-                        }
-                        else {
-                            int tpr = RRX(cpu, reg);
-                            cpu_set_apic_tpr(x86_cpu->apic_state, tpr);
-                            ret = EXCP_INTERRUPT;
-                        }
-                        break;
-                    }
-                    default:
-                        fprintf(stderr, "Unrecognized CR %d\n", cr);
-                        abort();
+                hvf_handle_io(env, port, &val, 0, size, 1);
+                if (size == 1) {
+                    AL(cpu) = val;
+                } else if (size == 2) {
+                    AX(cpu) = val;
+                } else if (size == 4) {
+                    RAX(cpu) = (uint32_t)val;
+                } else {
+                    VM_PANIC("size");
                 }
                 RIP(cpu) += ins_len;
                 store_regs(cpu);
                 break;
-            }
-            case EXIT_REASON_APIC_ACCESS: { // TODO
-                struct x86_decode decode;
-
-                load_regs(cpu);
-                cpu->hvf_x86->fetch_rip = rip;
-
-                decode_instruction(cpu, &decode);
-                exec_instruction(cpu, &decode);
-                store_regs(cpu);
-                break;
-            }
-            case EXIT_REASON_TPR: {
-                ret = 1;
-                break;
-            }
-            case EXIT_REASON_TASK_SWITCH: {
-                uint64_t vinfo = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_INFO);
-                x68_segment_selector sel = {.sel = exit_qual & 0xffff};
-                vmx_handle_task_switch(cpu, sel, (exit_qual >> 30) & 0x3,
-                 vinfo & VMCS_INTR_VALID, vinfo & VECTORING_INFO_VECTOR_MASK, vinfo & VMCS_INTR_T_MASK);
-                break;
-            }
-            case EXIT_REASON_TRIPLE_FAULT: {
-                //addr_t gpa = rvmcs(cpu->hvf_fd, VMCS_GUEST_PHYSICAL_ADDRESS);
-                qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
-                usleep(1000 * 100);
-                ret = EXCP_INTERRUPT;
-                break;
-            }
-            case EXIT_REASON_RDPMC:
-                wreg(cpu->hvf_fd, HV_X86_RAX, 0);
-                wreg(cpu->hvf_fd, HV_X86_RDX, 0);
+            } else if (!string && !in) {
+                RAX(cpu) = rreg(cpu->hvf_fd, HV_X86_RAX);
+                hvf_handle_io(env, port, &RAX(cpu), 1, size, 1);
                 macvm_set_rip(cpu, rip + ins_len);
                 break;
-            case VMX_REASON_VMCALL:
-                // TODO: maybe just take this out?
-                // if (g_hypervisor_iface) {
-                //     load_regs(cpu);
-                //     g_hypervisor_iface->hypercall_handler(cpu);
-                //     RIP(cpu) += rvmcs(cpu->hvf_fd, VMCS_EXIT_INSTRUCTION_LENGTH);
-                //     store_regs(cpu);
-                // }
+            }
+#endif
+            struct x86_decode decode;
+
+            load_regs(cpu);
+            cpu->hvf_x86->fetch_rip = rip;
+
+            decode_instruction(cpu, &decode);
+            VM_PANIC_ON(ins_len != decode.len);
+            exec_instruction(cpu, &decode);
+            store_regs(cpu);
+
+            break;
+        }
+        case EXIT_REASON_CPUID: {
+            uint32_t rax = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RAX);
+            uint32_t rbx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RBX);
+            uint32_t rcx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RCX);
+            uint32_t rdx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RDX);
+
+            cpu_x86_cpuid(env, rax, rcx, &rax, &rbx, &rcx, &rdx);
+
+            wreg(cpu->hvf_fd, HV_X86_RAX, rax);
+            wreg(cpu->hvf_fd, HV_X86_RBX, rbx);
+            wreg(cpu->hvf_fd, HV_X86_RCX, rcx);
+            wreg(cpu->hvf_fd, HV_X86_RDX, rdx);
+
+            macvm_set_rip(cpu, rip + ins_len);
+            break;
+        }
+        case EXIT_REASON_XSETBV: {
+            X86CPU *x86_cpu = X86_CPU(cpu);
+            CPUX86State *env = &x86_cpu->env;
+            uint32_t eax = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RAX);
+            uint32_t ecx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RCX);
+            uint32_t edx = (uint32_t)rreg(cpu->hvf_fd, HV_X86_RDX);
+
+            if (ecx) {
+                macvm_set_rip(cpu, rip + ins_len);
                 break;
+            }
+            env->xcr0 = ((uint64_t)edx << 32) | eax;
+            wreg(cpu->hvf_fd, HV_X86_XCR0, env->xcr0 | 1);
+            macvm_set_rip(cpu, rip + ins_len);
+            break;
+        }
+        case EXIT_REASON_INTR_WINDOW:
+            vmx_clear_int_window_exiting(cpu);
+            ret = EXCP_INTERRUPT;
+            break;
+        case EXIT_REASON_NMI_WINDOW:
+            vmx_clear_nmi_window_exiting(cpu);
+            ret = EXCP_INTERRUPT;
+            break;
+        case EXIT_REASON_EXT_INTR:
+            /* force exit and allow io handling */
+            ret = EXCP_INTERRUPT;
+            break;
+        case EXIT_REASON_RDMSR:
+        case EXIT_REASON_WRMSR:
+        {
+            load_regs(cpu);
+            if (exit_reason == EXIT_REASON_RDMSR) {
+                simulate_rdmsr(cpu);
+            } else {
+                simulate_wrmsr(cpu);
+            }
+            RIP(cpu) += rvmcs(cpu->hvf_fd, VMCS_EXIT_INSTRUCTION_LENGTH);
+            store_regs(cpu);
+            break;
+        }
+        case EXIT_REASON_CR_ACCESS: {
+            int cr;
+            int reg;
+
+            load_regs(cpu);
+            cr = exit_qual & 15;
+            reg = (exit_qual >> 8) & 15;
+
+            switch (cr) {
+            case 0x0: {
+                macvm_set_cr0(cpu->hvf_fd, RRX(cpu, reg));
+                break;
+            }
+            case 4: {
+                macvm_set_cr4(cpu->hvf_fd, RRX(cpu, reg));
+                break;
+            }
+            case 8: {
+                X86CPU *x86_cpu = X86_CPU(cpu);
+                if (exit_qual & 0x10) {
+                    RRX(cpu, reg) = cpu_get_apic_tpr(x86_cpu->apic_state);
+                } else {
+                    int tpr = RRX(cpu, reg);
+                    cpu_set_apic_tpr(x86_cpu->apic_state, tpr);
+                    ret = EXCP_INTERRUPT;
+                }
+                break;
+            }
             default:
-                fprintf(stderr, "%llx: unhandled exit %llx\n", rip, exit_reason);
+                error_report("Unrecognized CR %d\n", cr);
+                abort();
+            }
+            RIP(cpu) += ins_len;
+            store_regs(cpu);
+            break;
+        }
+        case EXIT_REASON_APIC_ACCESS: { /* TODO */
+            struct x86_decode decode;
+
+            load_regs(cpu);
+            cpu->hvf_x86->fetch_rip = rip;
+
+            decode_instruction(cpu, &decode);
+            exec_instruction(cpu, &decode);
+            store_regs(cpu);
+            break;
+        }
+        case EXIT_REASON_TPR: {
+            ret = 1;
+            break;
+        }
+        case EXIT_REASON_TASK_SWITCH: {
+            uint64_t vinfo = rvmcs(cpu->hvf_fd, VMCS_IDT_VECTORING_INFO);
+            x68_segment_selector sel = {.sel = exit_qual & 0xffff};
+            vmx_handle_task_switch(cpu, sel, (exit_qual >> 30) & 0x3,
+             vinfo & VMCS_INTR_VALID, vinfo & VECTORING_INFO_VECTOR_MASK, vinfo
+             & VMCS_INTR_T_MASK);
+            break;
+        }
+        case EXIT_REASON_TRIPLE_FAULT: {
+            qemu_system_reset_request(SHUTDOWN_CAUSE_GUEST_RESET);
+            ret = EXCP_INTERRUPT;
+            break;
+        }
+        case EXIT_REASON_RDPMC:
+            wreg(cpu->hvf_fd, HV_X86_RAX, 0);
+            wreg(cpu->hvf_fd, HV_X86_RDX, 0);
+            macvm_set_rip(cpu, rip + ins_len);
+            break;
+        case VMX_REASON_VMCALL:
+            /* TODO: inject #GP fault */
+            break;
+        default:
+            error_report("%llx: unhandled exit %llx\n", rip, exit_reason);
         }
     } while (ret == 0);
 
@@ -860,7 +828,6 @@ static int hvf_accel_init(MachineState *ms)
     hvf_state = s;
     cpu_interrupt_handler = hvf_handle_interrupt;
     memory_listener_register(&hvf_memory_listener, &address_space_memory);
-    memory_listener_register(&hvf_io_listener, &address_space_io);
     return 0;
 }
 

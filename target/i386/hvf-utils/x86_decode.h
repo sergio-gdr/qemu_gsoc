@@ -314,3 +314,11 @@ addr_t decode_linear_addr(struct CPUState *cpu, struct x86_decode *decode,
                           addr_t addr, x86_reg_segment seg);
 
 void init_decoder(CPUState *cpu);
+void calc_modrm_operand16(CPUState *cpu, struct x86_decode *decode,
+                          struct x86_decode_op *op);
+void calc_modrm_operand32(CPUState *cpu, struct x86_decode *decode,
+                          struct x86_decode_op *op);
+void calc_modrm_operand64(CPUState *cpu, struct x86_decode *decode,
+                          struct x86_decode_op *op);
+void set_addressing_size(CPUState *cpu, struct x86_decode *decode);
+void set_operand_size(CPUState *cpu, struct x86_decode *decode);
